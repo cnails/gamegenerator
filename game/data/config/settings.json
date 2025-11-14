@@ -1,0 +1,21 @@
+{
+  "screen_width": 1280,
+  "screen_height": 720,
+  "fps": 60,
+  "volume_master": 1.0,
+  "volume_sfx": 1.0,
+  "volume_music": 1.0,
+  "pixel_scale": 2,
+  "keybindings": {
+    "move_up": 119,
+    "move_down": 115,
+    "move_left": 97,
+    "move_right": 100,
+    "attack": 106,
+    "secondary": 107,
+    "skill": 108,
+    "inventory": 105,
+    "pause": 27
+  }
+}
+
