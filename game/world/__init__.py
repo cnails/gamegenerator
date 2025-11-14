@@ -1,2 +1,0 @@
-"""World generation and management."""
-
