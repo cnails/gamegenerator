@@ -1,2 +1,0 @@
-"""Weapon definitions and modifiers."""
-
