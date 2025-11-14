@@ -1,4 +1,4 @@
-import { BaseGameScene } from '../BaseGameScene';
+import { VerticalBaseScene } from './VerticalStandardScene';
 import Phaser from 'phaser';
 
 interface PuzzleBlock {
@@ -13,7 +13,7 @@ interface MatchScanResult {
   groups: number;
 }
 
-export class PuzzleScene extends BaseGameScene {
+export class PuzzleScene extends VerticalBaseScene {
   private grid: (PuzzleBlock | null)[][] = [];
   private gridSize: number = 6;
   private blockSize: number = 0;
@@ -42,6 +42,12 @@ export class PuzzleScene extends BaseGameScene {
 
   initGame(): void {
     const params = this.gameData?.config?.params ?? {};
+    this.initVerticalLayout({
+      minSafeWidth: 360,
+      maxSafeWidth: 520,
+      paddingX: 0.05,
+      paddingY: 0.04,
+    });
 
     this.gridSize = (params.gridSize as number) || 6;
     this.targetMatches = (params.targetMatches as number) || Math.max(14, this.gridSize * 2);
@@ -58,22 +64,22 @@ export class PuzzleScene extends BaseGameScene {
   }
 
   private createHud(): void {
-    const margin = Math.max(16, this.scale.width * 0.04);
-    const topOffset = 60;
+    const margin = Math.max(16, this.safeBounds.width * 0.04);
+    const topOffset = this.safeBounds.top + 40;
 
     this.instructionText = this.add
-      .text(this.scale.width / 2, topOffset, 'Собери цепочки и зарядись энергией артефакта!', {
+      .text(this.safeBounds.centerX, topOffset, 'Собери цепочки и зарядись энергией артефакта!', {
         fontSize: this.getResponsiveFont(20),
         color: '#ffffff',
         fontFamily: 'Arial',
         align: 'center',
-        wordWrap: { width: Math.min(this.scale.width - margin * 2, 480) },
+        wordWrap: { width: Math.min(this.safeBounds.width - margin * 2, 480) },
       })
       .setOrigin(0.5)
       .setScrollFactor(0);
 
     this.targetText = this.add
-      .text(margin, topOffset + 34, '', {
+      .text(this.safeBounds.left + margin, topOffset + 34, '', {
         fontSize: this.getResponsiveFont(16),
         color: '#f5f5f5',
         fontFamily: 'Arial',
@@ -82,7 +88,7 @@ export class PuzzleScene extends BaseGameScene {
       .setScrollFactor(0);
 
     this.moveText = this.add
-      .text(this.scale.width - margin, topOffset + 34, '', {
+      .text(this.safeBounds.right - margin, topOffset + 34, '', {
         fontSize: this.getResponsiveFont(16),
         color: '#f5f5f5',
         fontFamily: 'Arial',
@@ -90,11 +96,11 @@ export class PuzzleScene extends BaseGameScene {
       .setOrigin(1, 0.5)
       .setScrollFactor(0);
 
-    this.progressBarWidth = Math.min(this.scale.width - margin * 2, 420);
+    this.progressBarWidth = Math.min(this.safeBounds.width - margin * 2, 420);
     const barY = topOffset + 76;
 
     this.progressBarBg = this.add
-      .rectangle(this.scale.width / 2, barY, this.progressBarWidth, 12, 0xffffff, 0.2)
+      .rectangle(this.safeBounds.centerX, barY, this.progressBarWidth, 12, 0xffffff, 0.2)
       .setOrigin(0.5)
       .setScrollFactor(0);
 
@@ -104,7 +110,7 @@ export class PuzzleScene extends BaseGameScene {
       .setScrollFactor(0);
 
     this.comboText = this.add
-      .text(this.scale.width / 2, barY + 30, '', {
+      .text(this.safeBounds.centerX, barY + 30, '', {
         fontSize: this.getResponsiveFont(14),
         color: '#ffd54f',
         fontFamily: 'Arial',
@@ -116,7 +122,7 @@ export class PuzzleScene extends BaseGameScene {
   }
 
   private getResponsiveFont(size: number): string {
-    const scaleFactor = Phaser.Math.Clamp(this.scale.width / 390, 0.85, 1.3);
+    const scaleFactor = Phaser.Math.Clamp(this.safeBounds.width / 390, 0.85, 1.3);
     return `${Math.round(size * scaleFactor)}px`;
   }
 
@@ -150,12 +156,12 @@ export class PuzzleScene extends BaseGameScene {
   }
 
   private calculateLayout(): void {
-    const horizontalPadding = Math.max(16, this.scale.width * 0.05);
-    const topPadding = 150;
-    const bottomPadding = Math.max(40, this.scale.height * 0.08);
+    const horizontalPadding = Math.max(16, this.safeBounds.width * 0.05);
+    const innerTopPadding = Math.max(120, this.safeBounds.height * 0.12);
+    const innerBottomPadding = Math.max(60, this.safeBounds.height * 0.08);
 
-    const availableWidth = this.scale.width - horizontalPadding * 2;
-    const availableHeight = this.scale.height - topPadding - bottomPadding;
+    const availableWidth = this.safeBounds.width - horizontalPadding * 2;
+    const availableHeight = this.safeBounds.height - innerTopPadding - innerBottomPadding;
     const maxGridSpan = Math.max(Math.min(availableWidth, availableHeight), 120);
     const totalGap = this.cellGap * (this.gridSize - 1);
 
@@ -163,8 +169,8 @@ export class PuzzleScene extends BaseGameScene {
     this.blockSize = Phaser.Math.Clamp(this.blockSize, 26, 96);
 
     const gridPixelSize = this.blockSize * this.gridSize + totalGap;
-    this.layoutStartX = (this.scale.width - gridPixelSize) / 2 + this.blockSize / 2;
-    this.layoutStartY = topPadding + (availableHeight - gridPixelSize) / 2 + this.blockSize / 2;
+    this.layoutStartX = this.safeBounds.left + horizontalPadding + (availableWidth - gridPixelSize) / 2 + this.blockSize / 2;
+    this.layoutStartY = this.safeBounds.top + innerTopPadding + (availableHeight - gridPixelSize) / 2 + this.blockSize / 2;
   }
 
   private createBlock(row: number, col: number, color?: number): PuzzleBlock {
@@ -530,14 +536,17 @@ export class PuzzleScene extends BaseGameScene {
       return;
     }
 
-    const margin = Math.max(16, this.scale.width * 0.04);
+    const margin = Math.max(16, this.safeBounds.width * 0.04);
+    const centerX = this.safeBounds.centerX;
+    const left = this.safeBounds.left + margin;
+    const right = this.safeBounds.right - margin;
 
-    this.instructionText.setPosition(this.scale.width / 2, this.instructionText.y);
-    this.targetText.setPosition(margin, this.targetText.y);
-    this.moveText.setPosition(this.scale.width - margin, this.moveText.y);
-    this.progressBarBg.setPosition(this.scale.width / 2, this.progressBarBg.y);
+    this.instructionText.setPosition(centerX, this.instructionText.y);
+    this.targetText.setPosition(left, this.targetText.y);
+    this.moveText.setPosition(right, this.moveText.y);
+    this.progressBarBg.setPosition(centerX, this.progressBarBg.y);
     this.progressBarFill.setPosition(this.progressBarBg.x - this.progressBarWidth / 2, this.progressBarFill.y);
-    this.comboText.setPosition(this.scale.width / 2, this.comboText.y);
+    this.comboText.setPosition(centerX, this.comboText.y);
 
     this.targetText.setText(`Цель: ${this.matches}/${this.targetMatches}`);
     this.moveText.setText(`Ходы: ${this.movesLeft}`);

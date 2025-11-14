@@ -1,7 +1,7 @@
-import { BaseGameScene } from '../BaseGameScene';
+import { VerticalBaseScene } from './VerticalStandardScene';
 import Phaser from 'phaser';
 
-export class PlatformerScene extends BaseGameScene {
+export class PlatformerScene extends VerticalBaseScene {
   private player!: Phaser.Physics.Arcade.Sprite;
   private platforms!: Phaser.Physics.Arcade.StaticGroup;
   private cursors!: Phaser.Types.Input.Keyboard.CursorKeys;
@@ -46,11 +46,17 @@ export class PlatformerScene extends BaseGameScene {
 
   initGame(): void {
     this.applyVisualTheme();
+    this.initVerticalLayout({
+      minSafeWidth: 360,
+      maxSafeWidth: 560,
+      paddingX: 0.04,
+      paddingY: 0.02,
+    });
     const config = this.gameData.config;
     this.gameSpeed = (config.params.speed as number) || 1;
 
-    const viewportWidth = Math.max(this.scale.width, 320);
-    const viewportHeight = Math.max(this.scale.height, 560);
+    const viewportWidth = Math.max(this.safeBounds.width, 320);
+    const viewportHeight = Math.max(this.safeBounds.height, 560);
     const worldHeight = viewportHeight * 2.2;
 
     this.physics.world.setBounds(0, 0, viewportWidth, worldHeight);

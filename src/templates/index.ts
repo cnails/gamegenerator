@@ -68,39 +68,10 @@ export const gameTemplates: GameTemplateDefinition[] = [
   },
   {
     id: GameTemplate.VERTICAL_STANDARD,
-    name: 'Вертикальный 9:16',
-    description: 'Портретный шаблон с авто-скроллом вниз, адаптивным safe-area и готовым HUD',
-    defaultParams: {
-      scrollSpeed: 280,
-      spawnDensity: 1,
-      roundLength: 90,
-    },
-    paramFields: [
-      {
-        key: 'scrollSpeed',
-        label: 'Скорость скролла',
-        type: 'number',
-        defaultValue: 280,
-        min: 160,
-        max: 420,
-      },
-      {
-        key: 'spawnDensity',
-        label: 'Плотность событий',
-        type: 'number',
-        defaultValue: 1,
-        min: 0.5,
-        max: 2.5,
-      },
-      {
-        key: 'roundLength',
-        label: 'Длительность раунда (сек)',
-        type: 'number',
-        defaultValue: 90,
-        min: 45,
-        max: 240,
-      },
-    ],
+    name: 'Вертикальный каркас',
+    description: 'Чистая портретная сцена 9:16 для быстрых прототипов (safe-area, resize, pointer)',
+    defaultParams: {},
+    paramFields: [],
   },
   {
     id: GameTemplate.PUZZLE,

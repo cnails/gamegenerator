@@ -1,16 +1,15 @@
-import { BaseGameScene } from '../BaseGameScene';
+import { VerticalBaseScene } from './VerticalStandardScene';
 import Phaser from 'phaser';
 
 type EnemyType = 'basic' | 'zigzag' | 'tank';
 type PowerUpType = 'shield' | 'rapid' | 'spread';
 
-export class ArcadeScene extends BaseGameScene {
+export class ArcadeScene extends VerticalBaseScene {
   private player!: Phaser.Physics.Arcade.Sprite;
   private bullets!: Phaser.Physics.Arcade.Group;
   private enemies!: Phaser.Physics.Arcade.Group;
   private enemyLasers!: Phaser.Physics.Arcade.Group;
   private powerUps!: Phaser.Physics.Arcade.Group;
-  private safeBounds!: Phaser.Geom.Rectangle;
   private parallaxLayers: Phaser.GameObjects.Rectangle[] = [];
   private starEmitter?: Phaser.GameObjects.Particles.ParticleEmitter;
   private keyboardControls?: Phaser.Types.Input.Keyboard.CursorKeys;
@@ -60,20 +59,25 @@ export class ArcadeScene extends BaseGameScene {
     this.nextEnemySpawn = 0;
 
     this.physics.world.gravity.y = 0;
-    this.safeBounds = this.computeSafeBounds();
+    this.initVerticalLayout({
+      minSafeWidth: 360,
+      maxSafeWidth: 520,
+      paddingX: 0.04,
+      paddingY: 0.02,
+      enablePointer: true,
+      extraPointers: 2,
+    });
 
     this.cameras.main.setBackgroundColor('#050b18');
     this.createBackgroundLayers();
     this.createGroups();
     this.createPlayerShip();
     this.registerCollisions();
-    this.initInputHandlers();
     this.keyboardControls = this.input.keyboard?.createCursorKeys();
 
     this.createHud();
     this.startRoundTimer();
 
-    this.scale.on('resize', this.handleResize, this);
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       this.cleanup();
     });
@@ -96,16 +100,7 @@ export class ArcadeScene extends BaseGameScene {
     super.endGame(force);
   }
 
-  private computeSafeBounds(width: number = this.scale.width, height: number = this.scale.height): Phaser.Geom.Rectangle {
-    const maxWidth = Math.min(width, 520);
-    const minWidth = Math.min(width, 360);
-    const safeWidth = Phaser.Math.Clamp(width, minWidth, maxWidth);
-    const offsetX = (width - safeWidth) / 2;
-    return new Phaser.Geom.Rectangle(offsetX, 0, safeWidth, height);
-  }
-
-  private handleResize(gameSize: Phaser.Structs.Size): void {
-    this.safeBounds = this.computeSafeBounds(gameSize.width, gameSize.height);
+  protected onSafeAreaChanged(_safe?: Phaser.Geom.Rectangle, _play?: Phaser.Geom.Rectangle): void {
     this.refreshHudPositions();
     this.updateBackgroundLayout();
     if (this.touchTargetX !== undefined) {
@@ -202,29 +197,20 @@ export class ArcadeScene extends BaseGameScene {
     this.player.body?.setSize(24, 32);
   }
 
-  private initInputHandlers(): void {
-    this.input.addPointer(2);
-    this.input.on('pointerdown', this.handlePointerDown, this);
-    this.input.on('pointermove', this.handlePointerMove, this);
-    this.input.on('pointerup', this.handlePointerUp, this);
-    this.input.on('pointerupoutside', this.handlePointerUp, this);
-    this.input.on('pointerout', this.handlePointerUp, this);
-  }
-
-  private handlePointerDown(pointer: Phaser.Input.Pointer): void {
+  protected onPointerDown(pointer: Phaser.Input.Pointer): void {
     if (this.gameEnded) return;
     this.activePointerId = pointer.id;
     this.touchTargetX = this.clampToSafeBounds(pointer.x);
   }
 
-  private handlePointerMove(pointer: Phaser.Input.Pointer): void {
+  protected onPointerMove(pointer: Phaser.Input.Pointer): void {
     if (this.gameEnded) return;
     if (this.activePointerId === pointer.id) {
       this.touchTargetX = this.clampToSafeBounds(pointer.x);
     }
   }
 
-  private handlePointerUp(pointer: Phaser.Input.Pointer): void {
+  protected onPointerUp(pointer: Phaser.Input.Pointer): void {
     if (this.activePointerId === pointer.id) {
       this.activePointerId = undefined;
       this.touchTargetX = undefined;
@@ -704,12 +690,7 @@ export class ArcadeScene extends BaseGameScene {
 
     this.timerEvent?.remove(false);
     this.comboResetEvent?.remove(false);
-    this.scale.off('resize', this.handleResize, this);
-    this.input.off('pointerdown', this.handlePointerDown, this);
-    this.input.off('pointermove', this.handlePointerMove, this);
-    this.input.off('pointerup', this.handlePointerUp, this);
-    this.input.off('pointerupoutside', this.handlePointerUp, this);
-    this.input.off('pointerout', this.handlePointerUp, this);
+    this.destroyVerticalLayout();
     this.starEmitter?.destroy();
     this.starEmitter = undefined;
   }

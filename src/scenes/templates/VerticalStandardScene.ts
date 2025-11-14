@@ -1,114 +1,132 @@
 import Phaser from 'phaser';
 import { BaseGameScene } from '../BaseGameScene';
 
-export class VerticalStandardScene extends BaseGameScene {
-  private static readonly TARGET_ASPECT = 9 / 16;
+export interface VerticalLayoutOptions {
+  targetAspect?: number;
+  minSafeWidth?: number;
+  maxSafeWidth?: number;
+  paddingX?: number;
+  paddingY?: number;
+  enablePointer?: boolean;
+  extraPointers?: number;
+}
 
-  private safeViewport!: Phaser.Geom.Rectangle;
-  private playBounds!: Phaser.Geom.Rectangle;
-  private backgroundLayers: Phaser.GameObjects.Rectangle[] = [];
-  private parallaxStripe?: Phaser.GameObjects.TileSprite;
+const DEFAULT_LAYOUT_OPTIONS: Required<VerticalLayoutOptions> = {
+  targetAspect: 9 / 16,
+  minSafeWidth: 360,
+  maxSafeWidth: 520,
+  paddingX: 0.06,
+  paddingY: 0.08,
+  enablePointer: false,
+  extraPointers: 0,
+};
 
-  private player!: Phaser.Physics.Arcade.Sprite;
-  private playerTrail?: Phaser.GameObjects.Particles.ParticleEmitterManager;
-  private cursors?: Phaser.Types.Input.Keyboard.CursorKeys;
-  private pointerTargetX?: number;
-  private pointerId?: number;
+export abstract class VerticalBaseScene extends BaseGameScene {
+  protected safeBounds!: Phaser.Geom.Rectangle;
+  protected playBounds!: Phaser.Geom.Rectangle;
 
-  private obstacles!: Phaser.Physics.Arcade.Group;
-  private collectibles!: Phaser.Physics.Arcade.Group;
-  private enemies!: Phaser.Physics.Arcade.Group;
-  private enemyProjectiles!: Phaser.Physics.Arcade.Group;
+  private layoutOptions: Required<VerticalLayoutOptions> = DEFAULT_LAYOUT_OPTIONS;
+  private layoutInitialized: boolean = false;
+  private pointerRegistered: boolean = false;
 
-  private palette: number[] = [];
-
-  private worldSpeed: number = 260;
-  private spawnDensity: number = 1;
-  private nextObstacleAt: number = 0;
-  private nextCollectibleAt: number = 0;
-  private nextEnemyAt: number = 0;
-
-  private timerEvent?: Phaser.Time.TimerEvent;
-  private timeLeft: number = 90;
-  private roundDuration: number = 90;
-
-  private maxHealth: number = 3;
-  private health: number = 3;
-  private damageCooldownUntil: number = 0;
-
-  private healthText!: Phaser.GameObjects.Text;
-  private timerText!: Phaser.GameObjects.Text;
-  private progressFill!: Phaser.GameObjects.Graphics;
-  private progressFrame!: Phaser.GameObjects.Graphics;
-
-  private cleanedUp: boolean = false;
-
-  protected initGame(): void {
-    this.configureParameters();
-
-    this.palette = this.getVisualColors([0x0a1523, 0x122137, 0x1f3b63, 0x4caf50]);
-    this.safeViewport = this.computeSafeViewport();
-    this.playBounds = this.computePlayBounds();
-
-    this.physics.world.gravity.y = 0;
-    this.physics.world.setBounds(
-      this.playBounds.left,
-      this.playBounds.top,
-      this.playBounds.width,
-      this.playBounds.height,
-    );
-
-    this.cameras.main.setBackgroundColor(this.getVisualBackground(0x03060c));
-
-    this.createBackgroundLayers();
-    this.createGroups();
-    this.createPlayer();
-    this.createHud();
-    this.initInputHandlers();
-    this.registerCollisions();
-    this.startRoundTimer();
-
-    this.scale.on('resize', this.handleResize, this);
-    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
-      this.cleanup();
-    });
-  }
-
-  update(time: number, delta: number): void {
-    if (this.gameEnded) {
+  protected initVerticalLayout(options: Partial<VerticalLayoutOptions> = {}): void {
+    if (this.layoutInitialized) {
+      console.warn('[VerticalBaseScene] Layout already initialized');
       return;
     }
 
-    this.updatePlayerMovement(delta);
-    this.animateBackground(delta);
-    this.handleSpawns(time);
-    this.updateEnemiesBehavior(time);
-    this.cleanupOutOfBounds();
+    this.layoutOptions = { ...DEFAULT_LAYOUT_OPTIONS, ...options };
+    this.layoutInitialized = true;
+
+    this.recalculateBounds(this.scale.width, this.scale.height);
+
+    if (this.layoutOptions.enablePointer) {
+      const additionalPointers = Math.max(0, this.layoutOptions.extraPointers);
+      if (additionalPointers > 0) {
+        this.input.addPointer(additionalPointers);
+      }
+      this.pointerRegistered = true;
+      this.input.on('pointerdown', this.handlePointerDown, this);
+      this.input.on('pointermove', this.handlePointerMove, this);
+      this.input.on('pointerup', this.handlePointerUp, this);
+      this.input.on('pointerupoutside', this.handlePointerUp, this);
+      this.input.on('pointerout', this.handlePointerUp, this);
+    }
+
+    this.scale.on('resize', this.onLayoutResize, this);
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this.destroyVerticalLayout());
   }
 
-  private configureParameters(): void {
-    const params = this.gameData.config.params || {};
-    const speedParam = Number(params.scrollSpeed ?? params.speed ?? 260);
-    const densityParam = Number(params.spawnDensity ?? params.eventDensity ?? 1);
-    const durationParam = Number(params.roundLength ?? params.duration ?? 90);
-    const hpParam = Number(params.health ?? 3);
+  protected destroyVerticalLayout(): void {
+    if (!this.layoutInitialized) return;
+    this.layoutInitialized = false;
 
-    this.worldSpeed = Phaser.Math.Clamp(speedParam, 160, 420);
-    this.spawnDensity = Phaser.Math.Clamp(densityParam, 0.5, 2.5);
-    this.roundDuration = Phaser.Math.Clamp(durationParam, 45, 240);
-    this.timeLeft = this.roundDuration;
-    this.maxHealth = Phaser.Math.Clamp(hpParam, 2, 6);
-    this.health = this.maxHealth;
+    this.scale.off('resize', this.onLayoutResize, this);
+    if (this.pointerRegistered) {
+      this.input.off('pointerdown', this.handlePointerDown, this);
+      this.input.off('pointermove', this.handlePointerMove, this);
+      this.input.off('pointerup', this.handlePointerUp, this);
+      this.input.off('pointerupoutside', this.handlePointerUp, this);
+      this.input.off('pointerout', this.handlePointerUp, this);
+      this.pointerRegistered = false;
+    }
   }
 
-  private computeSafeViewport(width: number = this.scale.width, height: number = this.scale.height): Phaser.Geom.Rectangle {
+  protected onSafeAreaChanged(_safe: Phaser.Geom.Rectangle, _play: Phaser.Geom.Rectangle): void {
+    // Дочерние сцены могут переопределить для реагирования на resize
+  }
+
+  protected onPointerDown(_pointer: Phaser.Input.Pointer): void {
+    // Переопределяется дочерними сценами при необходимости
+  }
+
+  protected onPointerMove(_pointer: Phaser.Input.Pointer): void {
+    // Переопределяется дочерними сценами при необходимости
+  }
+
+  protected onPointerUp(_pointer: Phaser.Input.Pointer): void {
+    // Переопределяется дочерними сценами при необходимости
+  }
+
+  protected clampXWithinSafeArea(value: number, padding: number = 0): number {
+    return Phaser.Math.Clamp(value, this.safeBounds.left + padding, this.safeBounds.right - padding);
+  }
+
+  protected clampYWithinSafeArea(value: number, padding: number = 0): number {
+    return Phaser.Math.Clamp(value, this.safeBounds.top + padding, this.safeBounds.bottom - padding);
+  }
+
+  protected getSafeBounds(): Phaser.Geom.Rectangle {
+    return Phaser.Geom.Rectangle.Clone(this.safeBounds);
+  }
+
+  protected getPlayableBounds(): Phaser.Geom.Rectangle {
+    return Phaser.Geom.Rectangle.Clone(this.playBounds);
+  }
+
+  private onLayoutResize(gameSize: Phaser.Structs.Size): void {
+    this.recalculateBounds(gameSize.width, gameSize.height);
+  }
+
+  private recalculateBounds(width: number, height: number): void {
+    this.safeBounds = this.computeSafeBounds(width, height);
+    this.playBounds = this.computePlayBounds(this.safeBounds);
+    this.applyHudLayout();
+    this.onSafeAreaChanged(
+      Phaser.Geom.Rectangle.Clone(this.safeBounds),
+      Phaser.Geom.Rectangle.Clone(this.playBounds),
+    );
+  }
+
+  private computeSafeBounds(width: number, height: number): Phaser.Geom.Rectangle {
     const currentAspect = width / height;
-    const desiredAspect = VerticalStandardScene.TARGET_ASPECT;
+    const desiredAspect = this.layoutOptions.targetAspect;
 
     if (currentAspect >= desiredAspect) {
       const safeWidth = height * desiredAspect;
-      const offsetX = (width - safeWidth) / 2;
-      return new Phaser.Geom.Rectangle(offsetX, 0, safeWidth, height);
+      const clampedWidth = Phaser.Math.Clamp(safeWidth, this.layoutOptions.minSafeWidth, this.layoutOptions.maxSafeWidth);
+      const offsetX = (width - clampedWidth) / 2;
+      return new Phaser.Geom.Rectangle(offsetX, 0, clampedWidth, height);
     }
 
     const safeHeight = width / desiredAspect;
@@ -116,194 +134,58 @@ export class VerticalStandardScene extends BaseGameScene {
     return new Phaser.Geom.Rectangle(0, offsetY, width, safeHeight);
   }
 
-  private computePlayBounds(): Phaser.Geom.Rectangle {
-    const marginX = this.safeViewport.width * 0.06;
-    const marginY = this.safeViewport.height * 0.08;
+  private computePlayBounds(safeBounds: Phaser.Geom.Rectangle): Phaser.Geom.Rectangle {
+    const padX = safeBounds.width * this.layoutOptions.paddingX;
+    const padY = safeBounds.height * this.layoutOptions.paddingY;
     return new Phaser.Geom.Rectangle(
-      this.safeViewport.left + marginX,
-      this.safeViewport.top + marginY,
-      this.safeViewport.width - marginX * 2,
-      this.safeViewport.height - marginY * 2,
+      safeBounds.left + padX,
+      safeBounds.top + padY,
+      safeBounds.width - padX * 2,
+      safeBounds.height - padY * 2,
     );
   }
 
-  private createBackgroundLayers(): void {
-    this.backgroundLayers.forEach((layer) => layer.destroy());
-    this.backgroundLayers = [];
-    this.parallaxStripe?.destroy();
-    this.parallaxStripe = undefined;
-
-    const [baseColor, accentColor, glowColor] = this.palette;
-    const base = this.add
-      .rectangle(this.safeViewport.centerX, this.safeViewport.centerY, this.safeViewport.width, this.safeViewport.height, baseColor ?? 0x07111f)
-      .setDepth(-5)
-      .setScrollFactor(0);
-    this.backgroundLayers.push(base);
-
-    const playBackground = this.add
-      .rectangle(this.playBounds.centerX, this.playBounds.centerY, this.playBounds.width, this.playBounds.height, accentColor ?? 0x0e1d30, 0.95)
-      .setDepth(-4)
-      .setScrollFactor(0);
-    this.backgroundLayers.push(playBackground);
-
-    const glow = this.add
-      .rectangle(this.playBounds.centerX, this.playBounds.centerY, this.playBounds.width * 0.92, this.playBounds.height * 0.92, glowColor ?? 0x123155, 0.35)
-      .setDepth(-3)
-      .setScrollFactor(0);
-    this.backgroundLayers.push(glow);
-
-    const stripeTexture = this.ensureStripeTexture('vertical_lane', 12, 160, 0x102846, 0x0a172b);
-    this.parallaxStripe = this.add
-      .tileSprite(this.playBounds.centerX, this.playBounds.centerY, this.playBounds.width, this.playBounds.height, stripeTexture)
-      .setDepth(-2)
-      .setScrollFactor(0);
-  }
-
-  private layoutBackground(): void {
-    const centers = { x: this.safeViewport.centerX, y: this.safeViewport.centerY };
-    this.backgroundLayers.forEach((layer, index) => {
-      layer.x = index === 0 ? centers.x : this.playBounds.centerX;
-      layer.y = index === 0 ? centers.y : this.playBounds.centerY;
-      if (index === 0) {
-        layer.setSize(this.safeViewport.width, this.safeViewport.height);
-      } else if (index === 1) {
-        layer.setSize(this.playBounds.width, this.playBounds.height);
-      } else {
-        layer.setSize(this.playBounds.width * 0.92, this.playBounds.height * 0.92);
-      }
-    });
-
-    if (this.parallaxStripe) {
-      this.parallaxStripe.setPosition(this.playBounds.centerX, this.playBounds.centerY);
-      this.parallaxStripe.setSize(this.playBounds.width, this.playBounds.height);
-    }
-  }
-
-  private createGroups(): void {
-    this.obstacles = this.physics.add.group({ allowGravity: false, immovable: true });
-    this.collectibles = this.physics.add.group({ allowGravity: false });
-    this.enemies = this.physics.add.group({ allowGravity: false });
-    this.enemyProjectiles = this.physics.add.group({ allowGravity: false });
-  }
-
-  private createPlayer(): void {
-    const bodyTexture = this.ensureCapsuleTexture('vertical_player', 32, 54, this.palette[3] ?? 0x4caf50, 18);
-    this.player = this.physics.add.sprite(this.playBounds.centerX, this.playBounds.bottom - 80, bodyTexture);
-    this.player.setDepth(2);
-    this.player.setCollideWorldBounds(true);
-    this.player.body?.setAllowGravity(false);
-    this.player.body?.setSize(28, 48);
-
-    const trailTexture = this.ensureDiamondTexture('player_trail', 4, this.palette[3] ?? 0x4caf50);
-    const trailParticles = this.add.particles(trailTexture);
-    const emitterConfig: Phaser.Types.GameObjects.Particles.ParticleEmitterConfig = {
-      lifespan: 450,
-      speedX: { min: -20, max: 20 },
-      speedY: { min: 60, max: 120 },
-      scale: { start: 0.6, end: 0 },
-      alpha: { start: 0.35, end: 0 },
-      frequency: 60,
-    };
-    const creator = trailParticles as unknown as {
-      emitters?: {
-        add?: (config: Phaser.Types.GameObjects.Particles.ParticleEmitterConfig) => Phaser.GameObjects.Particles.ParticleEmitter;
-      };
-      addEmitter?: (config: Phaser.Types.GameObjects.Particles.ParticleEmitterConfig) => Phaser.GameObjects.Particles.ParticleEmitter;
-    };
-    const emitter =
-      creator.emitters?.add?.(emitterConfig) ??
-      creator.addEmitter?.call(trailParticles, emitterConfig);
-
-    if (emitter) {
-      emitter.startFollow(this.player, 0, 24);
-      trailParticles.setDepth(1);
-      this.playerTrail = trailParticles;
-    } else {
-      console.warn('[VerticalStandardScene] Particle emitter API недоступен, пропускаю визуальный хвост');
-      trailParticles.destroy();
-    }
-  }
-
-  private createHud(): void {
-    this.scoreText.setDepth(10);
-    this.refreshHudPositions();
-
-    this.healthText = this.add
-      .text(this.playBounds.left + 16, this.playBounds.top + 48, this.healthLabel(), {
-        fontSize: '20px',
-        color: '#ffffff',
-        fontFamily: 'Arial',
-      })
-      .setDepth(10)
-      .setScrollFactor(0);
-
-    this.timerText = this.add
-      .text(this.playBounds.right - 16, this.playBounds.top + 16, this.formatTime(this.timeLeft), {
-        fontSize: '22px',
-        color: '#80d4ff',
-        fontFamily: 'Arial',
-      })
-      .setDepth(10)
-      .setOrigin(1, 0)
-      .setScrollFactor(0);
-
-    this.progressFrame = this.add.graphics().setDepth(10).setScrollFactor(0);
-    this.progressFill = this.add.graphics().setDepth(11).setScrollFactor(0);
-    this.redrawProgressFrame();
-    this.updateProgressBar();
-  }
-
-  private refreshHudPositions(): void {
-    this.scoreText.setPosition(this.playBounds.left + 16, this.playBounds.top + 16);
-    if (this.healthText) {
-      this.healthText.setPosition(this.playBounds.left + 16, this.playBounds.top + 48);
-    }
-    if (this.timerText) {
-      this.timerText.setPosition(this.playBounds.right - 16, this.playBounds.top + 16);
-    }
-    this.redrawProgressFrame();
-    this.updateProgressBar();
-  }
-
-  private redrawProgressFrame(): void {
-    if (!this.progressFrame) return;
-    const width = this.playBounds.width - 140;
-    const height = 12;
-    const x = this.playBounds.left + 70;
-    const y = this.playBounds.bottom - 32;
-
-    this.progressFrame.clear();
-    this.progressFrame.lineStyle(2, 0xffffff, 0.35);
-    this.progressFrame.strokeRoundedRect(x, y, width, height, 8);
-  }
-
-  private initInputHandlers(): void {
-    this.cursors = this.input.keyboard?.createCursorKeys();
-    this.input.addPointer(1);
-    this.input.on('pointerdown', this.handlePointerDown, this);
-    this.input.on('pointermove', this.handlePointerMove, this);
-    this.input.on('pointerup', this.handlePointerUp, this);
-    this.input.on('pointerupoutside', this.handlePointerUp, this);
-  }
-
   private handlePointerDown(pointer: Phaser.Input.Pointer): void {
-    if (this.gameEnded) return;
-    this.pointerId = pointer.id;
-    this.pointerTargetX = this.clampToPlayBoundsX(pointer.worldX ?? pointer.x);
+    this.onPointerDown(pointer);
   }
 
   private handlePointerMove(pointer: Phaser.Input.Pointer): void {
-    if (this.gameEnded) return;
-    if (this.pointerId === pointer.id) {
-      this.pointerTargetX = this.clampToPlayBoundsX(pointer.worldX ?? pointer.x);
-    }
+    this.onPointerMove(pointer);
   }
 
   private handlePointerUp(pointer: Phaser.Input.Pointer): void {
-    if (this.pointerId === pointer.id) {
-      this.pointerId = undefined;
-      this.pointerTargetX = undefined;
+    this.onPointerUp(pointer);
+  }
+
+  private applyHudLayout(): void {
+    if (this.scoreText) {
+      this.scoreText.setPosition(this.safeBounds.left + 16, this.safeBounds.top + 16);
     }
+  }
+}
+
+export class VerticalStandardScene extends VerticalBaseScene {
+  protected initGame(): void {
+    this.initVerticalLayout({ enablePointer: true, extraPointers: 1 });
+
+    const play = this.getPlayableBounds();
+    this.add
+      .rectangle(play.centerX, play.centerY, play.width, play.height, 0x0d111c, 0.85)
+      .setDepth(-1)
+      .setStrokeStyle(2, 0x1f2b44, 0.8);
+
+    const label = this.add.text(
+      play.centerX,
+      play.centerY,
+      'Vertical Template Ready\nДобавьте игровую механику',
+      {
+        fontSize: '26px',
+        color: '#ffffff',
+        align: 'center',
+        fontFamily: 'Arial',
+      },
+    );
+    label.setOrigin(0.5);
   }
 
   private registerCollisions(): void {
