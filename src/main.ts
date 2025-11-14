@@ -6,9 +6,13 @@ import { GameStorage } from './storage/GameStorage';
 let mainScreen: MainScreen;
 let gameManager: GameManager;
 
+function renderMainScreen(): void {
+  mainScreen = new MainScreen('app');
+}
+
 function init(): void {
   // Инициализируем главный экран
-  mainScreen = new MainScreen('app');
+  renderMainScreen();
 
   // Инициализируем менеджер игр
   gameManager = new GameManager();
@@ -32,15 +36,7 @@ function init(): void {
     }
 
     // Возвращаемся на главный экран
-    setTimeout(() => {
-      const app = document.getElementById('app');
-      if (app) {
-        // Восстанавливаем стили для главного экрана
-        app.style.padding = '';
-        app.style.margin = '';
-      }
-      mainScreen = new MainScreen('app');
-    }, 1000);
+    renderMainScreen();
   });
 }
 
@@ -48,12 +44,11 @@ function startGame(game: GeneratedGame): void {
   // Сохраняем ID текущей игры
   (window as unknown as { currentGameId?: string }).currentGameId = game.id;
 
-  // Очищаем контейнер и убираем padding для полноэкранной игры
+  // Очищаем контейнер
   const app = document.getElementById('app');
   if (app) {
     app.innerHTML = '';
-    app.style.padding = '0';
-    app.style.margin = '0';
+    app.classList.add('game-mode');
   }
 
   // Запускаем игру

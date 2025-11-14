@@ -80,6 +80,7 @@ export const gameTemplates: GameTemplateDefinition[] = [
     defaultParams: {
       gridSize: 6,
       targetMatches: 10,
+      variantPrompt: '',
     },
     paramFields: [
       {
@@ -97,6 +98,13 @@ export const gameTemplates: GameTemplateDefinition[] = [
         defaultValue: 10,
         min: 5,
         max: 20,
+      },
+      {
+        key: 'variantPrompt',
+        label: 'LLM промпт для варианта (опционально)',
+        type: 'string',
+        defaultValue: '',
+        multiline: true,
       },
     ],
   },

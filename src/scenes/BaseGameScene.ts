@@ -8,7 +8,7 @@ export abstract class BaseGameScene extends Phaser.Scene {
   protected gameEnded: boolean = false;
   private endEventDispatched: boolean = false;
 
-  constructor(config: string | Phaser.Types.Scenes.SettingsConfig) {
+  constructor(config: string | Phaser.Types.Scenes.SettingsConfig = 'game') {
     super(config);
   }
 

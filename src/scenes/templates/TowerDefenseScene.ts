@@ -297,24 +297,42 @@ export class TowerDefenseScene extends BaseGameScene {
     let spawnIndex = 0;
     const spawnDelay = Phaser.Math.Clamp(900 - plan.length * 15, 450, 1100);
     const waveIndex = this.wavesStarted - 1;
+    let spawner: Phaser.Time.TimerEvent | null = null;
+
+    const finalizeWaveSchedule = () => {
+      if (spawner) {
+        this.activeSpawners = this.activeSpawners.filter((event) => event !== spawner);
+      }
+      if (this.wavesStarted >= this.waveDefinitions.length) {
+        this.allWavesScheduled = true;
+      } else if (!this.gameEnded) {
+        this.waveTimer = this.time.delayedCall(2000, () => this.spawnNextWave());
+      }
+    };
 
     this.spawnEnemy(plan[spawnIndex], wave, waveIndex);
     spawnIndex += 1;
 
-    const spawner = this.time.addEvent({
+    if (plan.length === 1) {
+      finalizeWaveSchedule();
+      return;
+    }
+
+    spawner = this.time.addEvent({
       delay: spawnDelay,
-      repeat: plan.length - 1,
+      loop: true,
       callbackScope: this,
       callback: () => {
+        if (spawnIndex >= plan.length) {
+          spawner?.remove(false);
+          finalizeWaveSchedule();
+          return;
+        }
         this.spawnEnemy(plan[spawnIndex], wave, waveIndex);
         spawnIndex += 1;
-      },
-      onComplete: () => {
-        this.activeSpawners = this.activeSpawners.filter((event) => event !== spawner);
-        if (this.wavesStarted >= this.waveDefinitions.length) {
-          this.allWavesScheduled = true;
-        } else if (!this.gameEnded) {
-          this.waveTimer = this.time.delayedCall(2000, () => this.spawnNextWave());
+        if (spawnIndex >= plan.length) {
+          spawner?.remove(false);
+          finalizeWaveSchedule();
         }
       },
     });
@@ -329,7 +347,7 @@ export class TowerDefenseScene extends BaseGameScene {
     enemy.setDepth(2);
     enemy.setCircle(12);
     enemy.setCollideWorldBounds(false);
-    enemy.body.setAllowGravity(false);
+    this.disableGravity(enemy);
 
     const speedMultiplier = this.getDifficultyMultiplier(this.gameData.difficulty);
     const baseSpeed = Phaser.Math.Clamp(definition.speed, 40, 160);
@@ -395,7 +413,7 @@ export class TowerDefenseScene extends BaseGameScene {
     const textureKey = this.ensureCircleTexture('projectile', 6, tower.definition.color ?? this.theme.projectile);
     const projectile = this.physics.add.image(tower.position.x, tower.position.y, textureKey);
     projectile.setDepth(4);
-    projectile.body.setAllowGravity(false);
+    this.disableGravity(projectile);
     projectile.setCircle(4);
 
     projectile.setData('damage', tower.definition.damage);
@@ -564,7 +582,7 @@ export class TowerDefenseScene extends BaseGameScene {
     }
 
     const parsed = raw
-      .map((item, index) => {
+      .map<TowerDefinition | null>((item, index) => {
         if (!item || typeof item !== 'object') return null;
         const data = item as Record<string, unknown>;
         const id = String(data.id ?? `tower-${index}`);
@@ -616,7 +634,7 @@ export class TowerDefenseScene extends BaseGameScene {
     }
 
     const parsed = raw
-      .map((item, index) => {
+      .map<EnemyDefinition | null>((item, index) => {
         if (!item || typeof item !== 'object') return null;
         const data = item as Record<string, unknown>;
         const id = String(data.id ?? `enemy-${index}`);
@@ -663,7 +681,7 @@ export class TowerDefenseScene extends BaseGameScene {
     }
 
     const waves: WaveDefinition[] = input
-      .map((item, index) => {
+      .map<WaveDefinition | null>((item, index) => {
         if (!item || typeof item !== 'object') return null;
         const data = item as Record<string, unknown>;
         const name = typeof data.name === 'string' ? data.name : `Волна ${index + 1}`;
@@ -725,13 +743,20 @@ export class TowerDefenseScene extends BaseGameScene {
   private ensureCircleTexture(prefix: string, radius: number, color: number): string {
     const key = `${prefix}_${radius}_${color.toString(16)}`;
     if (!this.textures.exists(key)) {
-      const graphics = this.make.graphics({ x: 0, y: 0, add: false });
+      const graphics = this.make.graphics({ x: 0, y: 0, add: false } as Phaser.Types.GameObjects.Graphics.Options);
       graphics.fillStyle(color, 1);
       graphics.fillCircle(radius, radius, radius);
       graphics.generateTexture(key, radius * 2, radius * 2);
       graphics.destroy();
     }
     return key;
+  }
+
+  private disableGravity(target?: Phaser.Physics.Arcade.Sprite | Phaser.Physics.Arcade.Image): void {
+    const body = target?.body;
+    if (body instanceof Phaser.Physics.Arcade.Body) {
+      body.setAllowGravity(false);
+    }
   }
 
   private normalizeNumber(value: unknown, fallback: number, min: number, max: number): number {

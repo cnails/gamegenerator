@@ -14,6 +14,9 @@ export class MainScreen {
       throw new Error(`Container with id "${containerId}" not found`);
     }
     this.container = container;
+    if (this.container.classList.contains('game-mode')) {
+      this.container.classList.remove('game-mode');
+    }
     this.chatGPTAPI = new ChatGPTAPI();
     this.loadGames();
     this.render();
@@ -198,14 +201,33 @@ export class MainScreen {
       const label = document.createElement('label');
       label.textContent = field.label;
 
+      if (field.type === 'boolean') {
+        group.classList.add('form-check');
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.id = `param-${field.key}`;
+        checkbox.checked = Boolean(field.defaultValue);
+        checkbox.className = 'form-check-input';
+        label.classList.add('form-check-label');
+        label.setAttribute('for', checkbox.id);
+        group.appendChild(checkbox);
+        group.appendChild(label);
+        paramsContainer.appendChild(group);
+        return;
+      }
+
       let input: HTMLElement;
 
       if (field.type === 'number') {
         input = document.createElement('input');
         (input as HTMLInputElement).type = 'number';
-        (input as HTMLInputElement).value = String(field.defaultValue);
+        (input as HTMLInputElement).value = String(field.defaultValue ?? '');
         if (field.min !== undefined) (input as HTMLInputElement).min = String(field.min);
         if (field.max !== undefined) (input as HTMLInputElement).max = String(field.max);
+      } else if (field.type === 'string' && field.multiline) {
+        input = document.createElement('textarea');
+        (input as HTMLTextAreaElement).value = String(field.defaultValue ?? '');
+        (input as HTMLTextAreaElement).rows = 3;
       } else if (field.type === 'select') {
         input = document.createElement('select');
         field.options?.forEach((opt) => {
@@ -214,10 +236,11 @@ export class MainScreen {
           option.textContent = opt;
           (input as HTMLSelectElement).appendChild(option);
         });
+        (input as HTMLSelectElement).value = String(field.defaultValue ?? '');
       } else {
         input = document.createElement('input');
-        (input as HTMLInputElement).type = field.type;
-        (input as HTMLInputElement).value = String(field.defaultValue);
+        (input as HTMLInputElement).type = 'text';
+        (input as HTMLInputElement).value = String(field.defaultValue ?? '');
       }
 
       input.className = 'form-control';
@@ -247,10 +270,14 @@ export class MainScreen {
 
     const params: Record<string, unknown> = {};
     templateDef.paramFields.forEach((field) => {
-      const input = document.getElementById(`param-${field.key}`) as HTMLInputElement | HTMLSelectElement;
+      const input = document.getElementById(
+        `param-${field.key}`,
+      ) as HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement | null;
       if (input) {
         if (field.type === 'number') {
           params[field.key] = Number((input as HTMLInputElement).value);
+        } else if (field.type === 'boolean') {
+          params[field.key] = (input as HTMLInputElement).checked;
         } else {
           params[field.key] = input.value;
         }

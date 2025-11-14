@@ -37,28 +37,6 @@ export class GameManager {
       this.phaserGame.destroy(true);
     }
 
-    const sceneClass = this.getSceneClassForTemplate(game.template);
-    const gameManager = this;
-    const gameDataForScene = game;
-
-    const SceneWrapper = class extends sceneClass {
-      init(data?: { gameData: GeneratedGame }): void {
-        const finalGameData = data?.gameData || gameDataForScene;
-        if (finalGameData) {
-          (this as unknown as { _gameData: GeneratedGame })._gameData = finalGameData;
-        }
-        super.init({ gameData: finalGameData });
-      }
-
-      create(): void {
-        super.create();
-        this.events.on('gameEnd', (score: number) => {
-          gameManager.scoreSystem.currentScore = score;
-          gameManager.endGame();
-        });
-      }
-    };
-
     const config: Phaser.Types.Core.GameConfig = {
       type: Phaser.AUTO,
       width: window.innerWidth,
@@ -72,7 +50,7 @@ export class GameManager {
           debug: false,
         },
       },
-      scene: SceneWrapper,
+      scene: [],
       scale: {
         mode: Phaser.Scale.RESIZE,
         autoCenter: Phaser.Scale.CENTER_BOTH,
@@ -81,8 +59,22 @@ export class GameManager {
 
     this.phaserGame = new Phaser.Game(config);
 
-    // Запускаем сцену с данными игры
-    this.phaserGame.scene.start('game', { gameData: game });
+    const sceneKey = 'game';
+    const sceneClass = this.getSceneClassForTemplate(game.template);
+    this.phaserGame.scene.add(sceneKey, sceneClass, false);
+    this.phaserGame.scene.start(sceneKey, { gameData: game });
+
+    this.phaserGame.events.once(Phaser.Core.Events.READY, () => {
+      const activeScene = this.phaserGame?.scene.getScene(sceneKey) as BaseGameScene | undefined;
+      if (!activeScene) {
+        return;
+      }
+
+      activeScene.events.once('gameEnd', (score: number) => {
+        this.scoreSystem.currentScore = score;
+        this.endGame();
+      });
+    });
   }
 
   private getSceneClassForTemplate(template: GameTemplate): typeof BaseGameScene {
@@ -120,13 +112,13 @@ export class GameManager {
 
     this.scoreSystem.rewards += rewards;
 
-    if (this.onGameEndCallback) {
-      this.onGameEndCallback(finalScore, rewards);
-    }
-
     if (this.phaserGame) {
       this.phaserGame.destroy(true);
       this.phaserGame = null;
+    }
+
+    if (this.onGameEndCallback) {
+      this.onGameEndCallback(finalScore, rewards);
     }
   }
 
