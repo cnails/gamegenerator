@@ -134,10 +134,10 @@ export abstract class BaseGameScene extends Phaser.Scene {
       }
     }
 
-    // Если запрошены конкретный id или роль и ничего не найдено — не падаем в общий fallback,
-    // чтобы, например, враги не отображались спрайтом героя. В этом случае сцена нарисует
-    // примитивную форму самостоятельно.
-    if (options.id || options.role) {
+    const iterator = this.llmTexturesById.values().next();
+    const fallback = iterator.value as string | undefined;
+
+    if (!fallback) {
       const key = `${options.id ?? 'no-id'}|${options.role ?? 'no-role'}`;
       if (!this.llmMissingTextureDebug.has(key)) {
         this.llmMissingTextureDebug.add(key);
@@ -148,12 +148,9 @@ export abstract class BaseGameScene extends Phaser.Scene {
           roles: Array.from(this.llmTexturesByRole.keys()),
         });
       }
-      return undefined;
     }
 
-    // Общий случай без конкретного запроса — можно вернуть первый доступный спрайт
-    const iterator = this.llmTexturesById.values().next();
-    return iterator.value as string | undefined;
+    return fallback;
   }
 
   protected getLlmSpriteMetaByTexture(textureKey: string): SpritePlanEntry | undefined {
@@ -377,8 +374,8 @@ export abstract class BaseGameScene extends Phaser.Scene {
 
     const mutators: GlobalMutator[] = Array.isArray(source.mutators)
       ? source.mutators
-          .filter((m) => !!m && typeof m === 'object')
-          .map((m, index): GlobalMutator | undefined => {
+          .filter((m): m is GlobalMutator => !!m && typeof m === 'object')
+          .map((m, index) => {
             const id =
               typeof m.id === 'string' && m.id.trim().length > 0
                 ? m.id.trim()

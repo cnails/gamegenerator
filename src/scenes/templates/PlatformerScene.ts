@@ -8,6 +8,7 @@ import type {
   PlatformerHazardPack,
   PlatformerPowerUp,
 } from '@/types';
+import { InputController } from '@/core/input/InputController';
 
 export class PlatformerScene extends VerticalBaseScene {
   private player!: Phaser.Physics.Arcade.Sprite;
@@ -19,14 +20,15 @@ export class PlatformerScene extends VerticalBaseScene {
   private obstacles!: Phaser.Physics.Arcade.Group;
   private collectedStars: number = 0;
   private gameSpeed: number = 1;
-  private mobileControls: {
-    leftPressed: boolean;
-    rightPressed: boolean;
-    jumpPressed: boolean;
-  } = {
-    leftPressed: false,
-    rightPressed: false,
-    jumpPressed: false,
+  private inputController?: InputController;
+  private readonly movementSettings = {
+    swipeThreshold: 60,
+    tapThreshold: 16,
+    holdDeadzone: 12,
+    baseHorizontalSpeed: 260,
+    groundControl: 0.55,
+    airControl: 0.25,
+    jumpVelocity: 360,
   };
   private timerText!: Phaser.GameObjects.Text;
   private timeLeft: number = 120;
@@ -430,12 +432,8 @@ export class PlatformerScene extends VerticalBaseScene {
     this.schedulePowerUps();
 
     // Управление
-    if (this.input.keyboard) {
-      this.cursors = this.input.keyboard.createCursorKeys();
-    } else {
-      // Для мобильных устройств создаем виртуальные кнопки или используем касания
-      this.setupMobileControls();
-    }
+    this.cursors = this.input.keyboard?.createCursorKeys() ?? this.createCursorFallback();
+    this.initializeInputController();
 
     // Камера и HUD
     this.setupCamera(viewportHeight, worldHeight);
@@ -487,100 +485,6 @@ export class PlatformerScene extends VerticalBaseScene {
     return `#${color.toString(16).padStart(6, '0')}`;
   }
 
-  private setupMobileControls(): void {
-    // Создаем виртуальные кнопки для мобильных устройств
-    const buttonSize = 60;
-    const padding = 20;
-    
-    // Левая кнопка
-    const leftButton = this.add
-      .rectangle(
-        padding + buttonSize / 2,
-        this.scale.height - padding - buttonSize / 2,
-        buttonSize,
-        buttonSize,
-        this.theme.mobileButton,
-        0.7,
-      )
-      .setInteractive({ useHandCursor: true })
-      .setScrollFactor(0);
-    
-    leftButton.on('pointerdown', () => {
-      this.mobileControls.leftPressed = true;
-    });
-    
-    leftButton.on('pointerup', () => {
-      this.mobileControls.leftPressed = false;
-    });
-
-    leftButton.on('pointerout', () => {
-      this.mobileControls.leftPressed = false;
-    });
-
-    // Правая кнопка
-    const rightButton = this.add
-      .rectangle(
-        padding + buttonSize * 2.5,
-        this.scale.height - padding - buttonSize / 2,
-        buttonSize,
-        buttonSize,
-        this.theme.mobileButton,
-        0.7,
-      )
-      .setInteractive({ useHandCursor: true })
-      .setScrollFactor(0);
-    
-    rightButton.on('pointerdown', () => {
-      this.mobileControls.rightPressed = true;
-    });
-    
-    rightButton.on('pointerup', () => {
-      this.mobileControls.rightPressed = false;
-    });
-
-    rightButton.on('pointerout', () => {
-      this.mobileControls.rightPressed = false;
-    });
-
-    // Кнопка прыжка
-    const jumpButton = this.add
-      .rectangle(
-        this.scale.width - padding - buttonSize / 2,
-        this.scale.height - padding - buttonSize / 2,
-        buttonSize,
-        buttonSize,
-        this.theme.jumpButton,
-        0.7,
-      )
-      .setInteractive({ useHandCursor: true })
-      .setScrollFactor(0);
-    
-    jumpButton.on('pointerdown', () => {
-      this.mobileControls.jumpPressed = true;
-      if (this.player.body!.touching.down) {
-        this.player.setVelocityY(-330);
-      }
-    });
-
-    jumpButton.on('pointerup', () => {
-      this.mobileControls.jumpPressed = false;
-    });
-
-    jumpButton.on('pointerout', () => {
-      this.mobileControls.jumpPressed = false;
-    });
-
-    // Создаем заглушку для cursors, чтобы избежать ошибок
-    this.cursors = {
-      left: { isDown: false } as Phaser.Input.Keyboard.Key,
-      right: { isDown: false } as Phaser.Input.Keyboard.Key,
-      up: { isDown: false } as Phaser.Input.Keyboard.Key,
-      down: { isDown: false } as Phaser.Input.Keyboard.Key,
-      space: { isDown: false } as Phaser.Input.Keyboard.Key,
-      shift: { isDown: false } as Phaser.Input.Keyboard.Key,
-    } as Phaser.Types.Input.Keyboard.CursorKeys;
-  }
-
   private createBackgroundLayers(width: number, height: number): void {
     this.cameras.main.setBackgroundColor(this.theme.background);
 
@@ -628,6 +532,48 @@ export class PlatformerScene extends VerticalBaseScene {
       this.player.setOffset((this.player.width - 28) / 2, (this.player.height - 32) / 2);
     }
     this.physics.add.collider(this.player, this.platforms);
+    this.player.setDragX(900);
+    this.player.setMaxVelocity(320, 900);
+  }
+
+  private initializeInputController(): void {
+    this.disposeInputController();
+    this.inputController = new InputController(this, {
+      swipeThreshold: this.movementSettings.swipeThreshold,
+      tapThreshold: this.movementSettings.tapThreshold,
+      holdDeadzone: this.movementSettings.holdDeadzone,
+    });
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, this.disposeInputController, this);
+  }
+
+  private disposeInputController(): void {
+    this.inputController?.destroy();
+    this.inputController = undefined;
+  }
+
+  private createCursorFallback(): Phaser.Types.Input.Keyboard.CursorKeys {
+    const fakeKey = () => ({ isDown: false } as Phaser.Input.Keyboard.Key);
+    return {
+      left: fakeKey(),
+      right: fakeKey(),
+      up: fakeKey(),
+      down: fakeKey(),
+      space: fakeKey(),
+      shift: fakeKey(),
+    } as Phaser.Types.Input.Keyboard.CursorKeys;
+  }
+
+  private canPlayerJump(): boolean {
+    const body = this.player.body as Phaser.Physics.Arcade.Body | undefined;
+    if (!body) {
+      return false;
+    }
+    return body.blocked.down || body.touching.down;
+  }
+
+  private performJump(): void {
+    const jumpStrength = this.movementSettings.jumpVelocity * Math.max(1, this.gameSpeed * 0.9);
+    this.player.setVelocityY(-jumpStrength);
   }
 
   private createPlatforms(worldHeight: number, width: number): void {
@@ -1115,6 +1061,7 @@ export class PlatformerScene extends VerticalBaseScene {
     this.speedBoostTimer?.remove(false);
     this.shieldTimer?.remove(false);
     this.scoreBoostTimer?.remove(false);
+    this.disposeInputController();
     super.endGame(force);
   }
 
@@ -1125,36 +1072,35 @@ export class PlatformerScene extends VerticalBaseScene {
     if (!this.player || !this.player.body) return;
 
     // Управление игроком
-    let moveLeft = false;
-    let moveRight = false;
+    let direction: -1 | 0 | 1 = 0;
 
     // Проверяем клавиатуру
-    if (this.cursors && this.input.keyboard) {
-      moveLeft = this.cursors.left.isDown;
-      moveRight = this.cursors.right.isDown;
-
-      if (this.cursors.up.isDown && this.player.body.touching.down) {
-        this.player.setVelocityY(-330);
-      }
+    const keyboardLeft = this.cursors?.left?.isDown ?? false;
+    const keyboardRight = this.cursors?.right?.isDown ?? false;
+    if (keyboardLeft && !keyboardRight) {
+      direction = -1;
+    } else if (keyboardRight && !keyboardLeft) {
+      direction = 1;
     }
 
-    // Проверяем мобильные кнопки
-    if (this.mobileControls.leftPressed) {
-      moveLeft = true;
-    }
-    if (this.mobileControls.rightPressed) {
-      moveRight = true;
+    const controllerDirection = this.inputController?.getMovementDirection() ?? 0;
+    if (controllerDirection !== 0) {
+      direction = controllerDirection;
     }
 
     // Применяем движение
-    const horizontalSpeed = 180 * this.gameSpeed * this.speedBoostMultiplier;
+    const horizontalSpeed = this.movementSettings.baseHorizontalSpeed * this.gameSpeed * this.speedBoostMultiplier;
     const invert = this.globalInvertHorizontal ? -1 : 1;
-    if (moveLeft && !moveRight) {
-      this.player.setVelocityX(-horizontalSpeed * invert);
-    } else if (moveRight && !moveLeft) {
-      this.player.setVelocityX(horizontalSpeed * invert);
-    } else {
-      this.player.setVelocityX(0);
+    const targetVelocity = direction * horizontalSpeed * invert;
+    const currentVelocity = (this.player.body as Phaser.Physics.Arcade.Body).velocity.x;
+    const smoothing = this.player.body.blocked.down ? this.movementSettings.groundControl : this.movementSettings.airControl;
+    const newVelocity = Phaser.Math.Linear(currentVelocity, targetVelocity, smoothing);
+    this.player.setVelocityX(Math.abs(newVelocity) < 5 ? 0 : newVelocity);
+
+    const keyboardJump = (this.cursors?.up?.isDown || this.cursors?.space?.isDown) ?? false;
+    const touchJump = this.inputController?.consumeJumpRequest() ?? false;
+    if (this.canPlayerJump() && (keyboardJump || touchJump)) {
+      this.performJump();
     }
 
     // Актуализируем параллакс
