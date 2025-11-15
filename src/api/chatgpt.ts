@@ -229,6 +229,28 @@ ${userPrompt}`;
     return `0 0 ${width} ${height}`;
   }
 
+  private buildFallbackHeroSvg(entry: SpritePlanEntry, styleGuide: SpriteStyleGuide): string {
+    const size = entry.size || 48;
+    const palette = entry.palette && entry.palette.length ? entry.palette : styleGuide.palette || [];
+    const base = palette[0] || '#3b1f2b';
+    const body = palette[1] || '#a1b5a9';
+    const core = palette[2] || '#ffffff';
+
+    const half = Math.floor(size / 2);
+    const bodySize = Math.floor(size * 0.28);
+    const bodyX = half - Math.floor(bodySize / 2);
+    const bodyY = half - Math.floor(bodySize / 2);
+    const coreSize = Math.max(4, Math.floor(bodySize * 0.5));
+    const coreX = half - Math.floor(coreSize / 2);
+    const coreY = half - Math.floor(coreSize / 2);
+
+    return `<svg viewBox="0 0 ${size} ${size}" width="${size}" height="${size}" xmlns="http://www.w3.org/2000/svg">
+  <rect x="${bodyX - 2}" y="${bodyY - 2}" width="${bodySize + 4}" height="${bodySize + 4}" fill="${base}" />
+  <rect x="${bodyX}" y="${bodyY}" width="${bodySize}" height="${bodySize}" fill="${body}" />
+  <rect x="${coreX}" y="${coreY}" width="${coreSize}" height="${coreSize}" fill="${core}" />
+</svg>`;
+  }
+
   private async enrichGameWithSprites(config: GameConfig, gameData: GeneratedGameData): Promise<void> {
     try {
       const plan = await this.generateSpritePlan(config, gameData);
@@ -254,6 +276,22 @@ ${userPrompt}`;
           meta: entry,
           svg,
           viewBox: this.extractViewBox(svg, entry.size),
+        });
+      }
+
+      // Если герой описан в плане, но ни один hero-спрайт не удалось получить от LLM — создаём простой fallback SVG
+      const heroMeta = plan.sprites.find((s) => s.role === 'hero');
+      const hasHeroSprite = spriteSheets.some((sheet) => sheet.meta.role === 'hero');
+      if (heroMeta && !hasHeroSprite) {
+        const fallbackSvg = this.buildFallbackHeroSvg(heroMeta, plan.styleGuide);
+        spriteSheets.push({
+          meta: heroMeta,
+          svg: fallbackSvg,
+          viewBox: this.extractViewBox(fallbackSvg, heroMeta.size),
+        });
+        console.warn('[SpriteGen] Hero-спрайт не был сгенерирован моделью, использован упрощённый fallback SVG.', {
+          heroId: heroMeta.id,
+          heroName: heroMeta.name,
         });
       }
 

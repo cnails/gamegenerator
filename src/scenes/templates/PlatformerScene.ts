@@ -609,7 +609,17 @@ export class PlatformerScene extends VerticalBaseScene {
   }
 
   private createPlayer(x: number, y: number): void {
-    const llmTexture = this.getLlmTextureKey({ role: 'hero' });
+    const llmTextureById = this.getLlmTextureKey({ id: 'hero-player' });
+    const llmTexture = llmTextureById ?? this.getLlmTextureKey({ role: 'hero' });
+
+    if (this.hasLlmSpriteKit()) {
+      console.info('[SpriteKit][Platformer] Выбор текстуры героя.', {
+        hasSpriteKit: true,
+        llmTextureById,
+        llmTextureByRole: llmTextureById ? undefined : this.getLlmTextureKey({ role: 'hero' }),
+      });
+    }
+
     const textureKey = llmTexture ?? this.ensureTexture('player', 36, 36, this.theme.player);
     this.player = this.physics.add.sprite(x, y, textureKey);
     this.player.setBounce(0.2);
