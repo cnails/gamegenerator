@@ -9,6 +9,8 @@ import type {
   ArcadeWaveDefinition,
   ArcadeWeaponProfile,
   ArcadeEnemyAbility,
+  PlayerWeaponProfile,
+  HeroHullProfile,
 } from '@/types';
 
 type EnemyType = 'basic' | 'zigzag' | 'tank';
@@ -70,6 +72,11 @@ export class ArcadeScene extends VerticalBaseScene {
   private powerUpPool: ArcadePowerUpProfile[] = [];
   private spawnRateFactor: number = 1;
   private maxEnemiesOnScreen: number = 8;
+  private playerWeaponsMap: Map<string, PlayerWeaponProfile> = new Map();
+  private heroHullsMap: Map<string, HeroHullProfile> = new Map();
+  private currentPlayerWeapon?: PlayerWeaponProfile;
+  private currentHeroHull?: HeroHullProfile;
+  private playerWeaponCooldown: number = 0;
 
   private loadVariantSettings(): void {
     const defaults = this.getDefaultVariantSettings();
@@ -86,6 +93,15 @@ export class ArcadeScene extends VerticalBaseScene {
     }
     this.enemyProfilesMap = new Map(this.variantSettings.enemyProfiles.map((profile) => [profile.id, profile]));
     this.powerUpPool = this.variantSettings.powerUps;
+    this.playerWeaponsMap = new Map(this.variantSettings.playerWeapons.map((weapon) => [weapon.id, weapon]));
+    this.heroHullsMap = new Map(this.variantSettings.heroHulls.map((hull) => [hull.id, hull]));
+    
+    // Устанавливаем оружие и корпус по умолчанию
+    const defaultWeaponId = this.variantSettings.defaultWeaponId ?? this.variantSettings.playerWeapons[0]?.id;
+    const defaultHullId = this.variantSettings.defaultHullId ?? this.variantSettings.heroHulls[0]?.id;
+    this.currentPlayerWeapon = defaultWeaponId ? this.playerWeaponsMap.get(defaultWeaponId) : this.variantSettings.playerWeapons[0];
+    this.currentHeroHull = defaultHullId ? this.heroHullsMap.get(defaultHullId) : this.variantSettings.heroHulls[0];
+    
     this.currentWaveIndex = 0;
     this.objectiveCompleted = false;
   }
@@ -99,6 +115,23 @@ export class ArcadeScene extends VerticalBaseScene {
     }
 
     const enemyProfiles = this.buildEnemyProfiles(incoming.enemyProfiles, defaults.enemyProfiles);
+    const playerWeapons = this.buildPlayerWeapons(incoming.playerWeapons, defaults.playerWeapons);
+    const heroHulls = this.buildHeroHulls(incoming.heroHulls, defaults.heroHulls);
+    
+    // Валидируем defaultWeaponId и defaultHullId
+    const weaponIds = new Set(playerWeapons.map((w) => w.id));
+    const hullIds = new Set(heroHulls.map((h) => h.id));
+    const defaultWeaponId = incoming.defaultWeaponId && weaponIds.has(incoming.defaultWeaponId) 
+      ? incoming.defaultWeaponId 
+      : defaults.defaultWeaponId && weaponIds.has(defaults.defaultWeaponId)
+      ? defaults.defaultWeaponId
+      : playerWeapons[0]?.id;
+    const defaultHullId = incoming.defaultHullId && hullIds.has(incoming.defaultHullId)
+      ? incoming.defaultHullId
+      : defaults.defaultHullId && hullIds.has(defaults.defaultHullId)
+      ? defaults.defaultHullId
+      : heroHulls[0]?.id;
+    
     return {
       codename: this.getString(incoming.codename, defaults.codename),
       briefing: this.getString(incoming.briefing, defaults.briefing),
@@ -108,6 +141,10 @@ export class ArcadeScene extends VerticalBaseScene {
       waves: this.buildArcadeWaves(incoming.waves, defaults.waves, enemyProfiles),
       enemyProfiles,
       powerUps: this.buildPowerUps(incoming.powerUps, defaults.powerUps),
+      playerWeapons,
+      heroHulls,
+      defaultWeaponId,
+      defaultHullId,
     };
   }
 
@@ -286,6 +323,88 @@ export class ArcadeScene extends VerticalBaseScene {
     return sanitized.length > 0 ? sanitized : fallback;
   }
 
+  private buildPlayerWeapons(
+    source: PlayerWeaponProfile[] | undefined,
+    fallback: PlayerWeaponProfile[],
+  ): PlayerWeaponProfile[] {
+    if (!Array.isArray(source) || source.length === 0) {
+      return fallback;
+    }
+    
+    const weaponTypes: PlayerWeaponProfile['type'][] = ['standard', 'rapid', 'spread', 'burst', 'piercing', 'homing'];
+    const sanitized: PlayerWeaponProfile[] = [];
+    
+    for (let index = 0; index < source.length; index++) {
+      const weapon = source[index];
+      if (!weapon || typeof weapon !== 'object') continue;
+      
+      const base = fallback[index % fallback.length];
+      const type = weaponTypes.includes(weapon.type) ? weapon.type : base.type;
+      
+      const result: PlayerWeaponProfile = {
+        id: this.getString(weapon.id, base.id),
+        name: this.getString(weapon.name, base.name),
+        description: this.getString(weapon.description, base.description),
+        type,
+        projectileSpeed: this.clampNumber(weapon.projectileSpeed ?? base.projectileSpeed, 300, 500),
+        cooldown: this.clampNumber(weapon.cooldown ?? base.cooldown, 80, 500),
+        damage: Math.round(this.clampNumber(weapon.damage ?? base.damage, 1, 3)),
+      };
+      
+      if (weapon.spreadAngle !== undefined || base.spreadAngle !== undefined) {
+        result.spreadAngle = this.clampNumber(weapon.spreadAngle ?? base.spreadAngle ?? 18, 10, 45);
+      }
+      if (weapon.burstCount !== undefined || base.burstCount !== undefined) {
+        result.burstCount = Math.round(this.clampNumber(weapon.burstCount ?? base.burstCount ?? 3, 2, 5));
+      }
+      if (weapon.projectileCount !== undefined || base.projectileCount !== undefined) {
+        result.projectileCount = Math.round(this.clampNumber(weapon.projectileCount ?? base.projectileCount ?? 3, 2, 5));
+      }
+      
+      sanitized.push(result);
+    }
+    
+    return sanitized.length > 0 ? sanitized : fallback;
+  }
+
+  private buildHeroHulls(
+    source: HeroHullProfile[] | undefined,
+    fallback: HeroHullProfile[],
+  ): HeroHullProfile[] {
+    if (!Array.isArray(source) || source.length === 0) {
+      return fallback;
+    }
+    
+    const hullTypes: HeroHullProfile['type'][] = ['light', 'medium', 'heavy', 'agile', 'tank'];
+    const sanitized: HeroHullProfile[] = [];
+    
+    for (let index = 0; index < source.length; index++) {
+      const hull = source[index];
+      if (!hull || typeof hull !== 'object') continue;
+      
+      const base = fallback[index % fallback.length];
+      const type = hullTypes.includes(hull.type) ? hull.type : base.type;
+      
+      const result: HeroHullProfile = {
+        id: this.getString(hull.id, base.id),
+        name: this.getString(hull.name, base.name),
+        description: this.getString(hull.description, base.description),
+        type,
+        healthModifier: this.clampNumber(hull.healthModifier ?? base.healthModifier, 0.5, 2.0),
+        speedModifier: this.clampNumber(hull.speedModifier ?? base.speedModifier, 0.5, 2.0),
+        sizeModifier: this.clampNumber(hull.sizeModifier ?? base.sizeModifier, 0.7, 1.5),
+      };
+      
+      if (hull.specialAbility || base.specialAbility) {
+        result.specialAbility = this.getString(hull.specialAbility ?? '', base.specialAbility ?? '');
+      }
+      
+      sanitized.push(result);
+    }
+    
+    return sanitized.length > 0 ? sanitized : fallback;
+  }
+
   private getDefaultVariantSettings(): ArcadeVariantSettings {
     return {
       codename: 'Pulse Shield',
@@ -434,6 +553,88 @@ export class ArcadeScene extends VerticalBaseScene {
           dropChance: 0.25,
         },
       ],
+      playerWeapons: [
+        {
+          id: 'standard_laser',
+          name: 'Стандартный лазер',
+          description: 'Базовая скорострельная пушка с равномерной стрельбой.',
+          type: 'standard',
+          projectileSpeed: 460,
+          cooldown: 200,
+          damage: 1,
+        },
+        {
+          id: 'rapid_pulse',
+          name: 'Быстрый импульс',
+          description: 'Высокая скорострельность, но меньший урон за выстрел.',
+          type: 'rapid',
+          projectileSpeed: 440,
+          cooldown: 120,
+          damage: 1,
+        },
+        {
+          id: 'spread_shot',
+          name: 'Веерный залп',
+          description: 'Стреляет тремя снарядами веером.',
+          type: 'spread',
+          projectileSpeed: 420,
+          cooldown: 280,
+          damage: 1,
+          spreadAngle: 18,
+          projectileCount: 3,
+        },
+        {
+          id: 'burst_cannon',
+          name: 'Залповое орудие',
+          description: 'Выпускает несколько снарядов подряд в одну точку.',
+          type: 'burst',
+          projectileSpeed: 450,
+          cooldown: 350,
+          damage: 1,
+          burstCount: 3,
+        },
+      ],
+      heroHulls: [
+        {
+          id: 'light_frame',
+          name: 'Лёгкий корпус',
+          description: 'Быстрый и манёвренный, но хрупкий.',
+          type: 'light',
+          healthModifier: 0.8,
+          speedModifier: 1.3,
+          sizeModifier: 0.9,
+        },
+        {
+          id: 'balanced_hull',
+          name: 'Сбалансированный корпус',
+          description: 'Оптимальный баланс между защитой и скоростью.',
+          type: 'medium',
+          healthModifier: 1.0,
+          speedModifier: 1.0,
+          sizeModifier: 1.0,
+        },
+        {
+          id: 'heavy_armor',
+          name: 'Тяжёлая броня',
+          description: 'Прочный корпус с повышенной прочностью, но медленный.',
+          type: 'heavy',
+          healthModifier: 1.5,
+          speedModifier: 0.8,
+          sizeModifier: 1.2,
+        },
+        {
+          id: 'agile_striker',
+          name: 'Проворный ударник',
+          description: 'Максимальная скорость и манёвренность.',
+          type: 'agile',
+          healthModifier: 0.9,
+          speedModifier: 1.5,
+          sizeModifier: 0.85,
+          specialAbility: 'Быстрые манёвры',
+        },
+      ],
+      defaultWeaponId: 'standard_laser',
+      defaultHullId: 'balanced_hull',
     };
   }
 
@@ -464,11 +665,16 @@ export class ArcadeScene extends VerticalBaseScene {
         ? this.variantSettings.objective.survivalTime ?? durationBase
         : durationBase;
     this.timeLeft = Phaser.Math.Clamp(resolvedDuration, 45, 240);
-    this.health = this.maxHealth = 3;
+    // Применяем модификаторы корпуса к здоровью
+    const hull = this.currentHeroHull ?? this.variantSettings.heroHulls[0];
+    const baseHealth = 3;
+    this.maxHealth = Math.round(baseHealth * (hull?.healthModifier ?? 1.0));
+    this.health = this.maxHealth;
     this.comboMultiplier = 1;
     this.spawnAcceleration = 0;
     this.nextAutoShot = 0;
     this.nextEnemySpawn = 0;
+    this.playerWeaponCooldown = 0;
 
     this.physics.world.gravity.y = 0;
     this.initVerticalLayout({
@@ -505,6 +711,7 @@ export class ArcadeScene extends VerticalBaseScene {
     this.handleAutoFire(time);
     this.handleEnemySpawns(time);
     this.updateEnemies(delta);
+    this.updatePlayerBullets(delta);
     this.recycleObjects();
     this.updateShieldVisual();
     this.animateBackground(delta);
@@ -586,17 +793,28 @@ export class ArcadeScene extends VerticalBaseScene {
 
   private createPlayerShip(): void {
     const llmTexture = this.getLlmTextureKey({ role: 'hero' });
-    const playerTexture = llmTexture ?? this.ensureTriangleTexture('player_ship', 46, 46, 0x4caf50);
+    const hull = this.currentHeroHull ?? this.variantSettings.heroHulls[0];
+    const baseSize = 46;
+    const size = Math.round(baseSize * (hull?.sizeModifier ?? 1.0));
+    const playerTexture = llmTexture ?? this.ensureTriangleTexture('player_ship', size, size, 0x4caf50);
     this.player = this.physics.add.sprite(this.safeBounds.centerX, this.scale.height - 90, playerTexture);
     this.player.setDepth(2);
     this.player.setCollideWorldBounds(true);
     this.player.setDamping(true);
-    this.player.setDragX(0.9);
+    
+    // Применяем модификатор скорости корпуса к трению (меньше трение = больше скорость)
+    const speedMod = hull?.speedModifier ?? 1.0;
+    const baseDrag = 0.9;
+    const adjustedDrag = Phaser.Math.Clamp(baseDrag + (1.0 - speedMod) * 0.15, 0.7, 0.98);
+    this.player.setDragX(adjustedDrag);
+    
     this.disableGravity(this.player);
     if (llmTexture) {
       this.fitSpriteToLlmMeta(this.player, llmTexture, { bodyWidthRatio: 0.62, bodyHeightRatio: 0.8 });
     } else {
-      this.player.body?.setSize(24, 32);
+      const bodyWidth = Math.round(24 * (hull?.sizeModifier ?? 1.0));
+      const bodyHeight = Math.round(32 * (hull?.sizeModifier ?? 1.0));
+      this.player.body?.setSize(bodyWidth, bodyHeight);
     }
   }
 
@@ -764,7 +982,9 @@ export class ArcadeScene extends VerticalBaseScene {
         (this.keyboardControls.right?.isDown ? 1 : 0);
       const move = moveRaw * directionFactor;
       if (move !== 0) {
-        const speed = (260 * this.gameSpeed * delta) / 1000;
+        const hull = this.currentHeroHull ?? this.variantSettings.heroHulls[0];
+        const speedModifier = hull?.speedModifier ?? 1;
+        const speed = (260 * this.gameSpeed * speedModifier * delta) / 1000;
         this.player.x = clampX(this.player.x + move * speed);
       }
     }
@@ -773,28 +993,104 @@ export class ArcadeScene extends VerticalBaseScene {
   }
 
   private handleAutoFire(time: number): void {
-    if (time < this.nextAutoShot) return;
-    this.firePlayerWeapons();
-    this.nextAutoShot = time + this.getFireDelay();
+    const weapon = this.currentPlayerWeapon ?? this.variantSettings.playerWeapons[0];
+    if (!weapon) return;
+    
+    // Используем cooldown оружия с учётом модификаторов
+    const baseCooldown = weapon.cooldown;
+    const rapidModifier = this.isRapidFireActive() ? 0.5 : 1.0;
+    const adjustedCooldown = baseCooldown * rapidModifier / this.gameSpeed;
+    
+    if (this.playerWeaponCooldown <= 0) {
+      this.firePlayerWeapons();
+      this.playerWeaponCooldown = adjustedCooldown;
+      this.nextAutoShot = time + adjustedCooldown;
+    } else {
+      this.playerWeaponCooldown -= 16; // Примерно 60 FPS
+    }
   }
 
   private getFireDelay(): number {
     const rapid = this.isRapidFireActive();
-    const baseDelay = rapid ? 140 : 260;
-    return baseDelay / this.gameSpeed;
+    const weapon = this.currentPlayerWeapon ?? this.variantSettings.playerWeapons[0];
+    const baseDelay = weapon ? weapon.cooldown : (rapid ? 140 : 260);
+    const adjustedDelay = rapid ? baseDelay * 0.5 : baseDelay;
+    return adjustedDelay / this.gameSpeed;
   }
 
   private firePlayerWeapons(): void {
-    const offsets = this.isSpreadActive() ? [-22, 0, 22] : [0];
-    offsets.forEach((offset) => this.createBullet(offset));
+    const weapon = this.currentPlayerWeapon ?? this.variantSettings.playerWeapons[0];
+    if (!weapon) {
+      // Fallback к старой логике
+      const offsets = this.isSpreadActive() ? [-22, 0, 22] : [0];
+      offsets.forEach((offset) => this.createBullet(offset));
+      return;
+    }
+    
+    const spreadActive = this.isSpreadActive();
+    const projectileSpeed = weapon.projectileSpeed * this.gameSpeed;
+    
+    switch (weapon.type) {
+      case 'spread':
+      case 'standard': {
+        if (weapon.type === 'spread' || spreadActive) {
+          const count = weapon.projectileCount ?? 3;
+          const spreadAngle = weapon.spreadAngle ?? 18;
+          const startAngle = 90 - spreadAngle;
+          const step = count > 1 ? (spreadAngle * 2) / (count - 1) : 0;
+          for (let i = 0; i < count; i++) {
+            const angle = startAngle + i * step;
+            const rad = Phaser.Math.DegToRad(angle);
+            const offsetX = Math.sin(rad) * 15;
+            this.createBullet(offsetX, -projectileSpeed, weapon);
+          }
+        } else {
+          this.createBullet(0, -projectileSpeed, weapon);
+        }
+        break;
+      }
+      case 'rapid': {
+        this.createBullet(0, -projectileSpeed, weapon);
+        break;
+      }
+      case 'burst': {
+        const burstCount = weapon.burstCount ?? 3;
+        for (let i = 0; i < burstCount; i++) {
+          const offset = (i - (burstCount - 1) / 2) * 8;
+          this.createBullet(offset, -projectileSpeed, weapon);
+        }
+        break;
+      }
+      case 'piercing':
+      case 'homing':
+      default: {
+        this.createBullet(0, -projectileSpeed, weapon);
+        break;
+      }
+    }
   }
 
-  private createBullet(offsetX: number): void {
+  private createBullet(offsetX: number, velocityY?: number, weapon?: PlayerWeaponProfile): void {
     const bulletTexture = this.ensureRoundedRectTexture('player_bullet', 8, 24, 0xfff176, 4);
     const bullet = this.bullets.create(this.player.x + offsetX, this.player.y - 30, bulletTexture) as Phaser.Physics.Arcade.Sprite;
     this.disableGravity(bullet);
-    bullet.setVelocityY(-460 * this.gameSpeed);
+    const activeWeapon = weapon ?? this.currentPlayerWeapon ?? this.variantSettings.playerWeapons[0];
+    const vy = velocityY ?? (-460 * this.gameSpeed);
+    const speed = Math.abs(vy);
+    bullet.setVelocityY(vy);
     bullet.setDepth(1);
+    // Параметры урона и поведения пули
+    const damage = activeWeapon?.damage ?? 1;
+    const isPiercing = activeWeapon?.type === 'piercing';
+    const isHoming = activeWeapon?.type === 'homing';
+    bullet.setData('damage', damage);
+    bullet.setData('speed', speed);
+    bullet.setData('piercing', isPiercing);
+    bullet.setData('homing', isHoming);
+    if (isPiercing) {
+      // Сколько целей может прошить
+      bullet.setData('pierceLeft', activeWeapon?.projectileCount ?? 3);
+    }
   }
 
   private handleEnemySpawns(time: number): void {
@@ -835,14 +1131,27 @@ export class ArcadeScene extends VerticalBaseScene {
       enemy.setData('weapon', { ...weapon });
     }
     if (ability) {
-      enemy.setData('ability', { ...ability });
+    enemy.setData('ability', { ...ability });
       const initialDelay = (ability.cooldown ?? 3) * 1000 * Phaser.Math.FloatBetween(0.4, 0.9);
       enemy.setData('abilityNext', this.time.now + initialDelay);
     }
-    const baseDelay = weapon?.cooldownModifier ? weapon.cooldownModifier * 900 : Phaser.Math.Between(900, 1700);
-    const shootDelay = baseDelay / fireModifier;
+
+    // Настройка задержек выстрелов врага.
+    // baseDelay — базовый интервал между выстрелами, завязан на weapon.cooldownModifier.
+    // fireModifier < 1.0 — враг стреляет реже, > 1.0 — чаще.
+    const baseDelay =
+      weapon?.cooldownModifier && Number.isFinite(weapon.cooldownModifier)
+        ? Phaser.Math.Clamp(weapon.cooldownModifier, 0.6, 1.6) * 1200
+        : Phaser.Math.Between(900, 1500);
+    const clampedFireModifier = Phaser.Math.Clamp(fireModifier || 1, 0.7, 1.5);
+    const shootDelay = baseDelay / clampedFireModifier;
+
+    // Первый выстрел делаем заметно раньше, чем основной интервал,
+    // чтобы враг успевал стрелять ещё в верхней половине экрана.
+    const firstShotDelay = shootDelay * Phaser.Math.FloatBetween(0.35, 0.7);
+
     enemy.setData('shootDelay', shootDelay);
-    enemy.setData('nextShot', this.time.now + shootDelay);
+    enemy.setData('nextShot', this.time.now + firstShotDelay);
     enemy.setData('zigzagAmplitude', Phaser.Math.Between(16, 28));
     enemy.setData('zigzagSpeed', Phaser.Math.FloatBetween(0.002, 0.004));
     enemy.setData('zigzagSeed', Math.random() * Math.PI * 2);
@@ -870,6 +1179,43 @@ export class ArcadeScene extends VerticalBaseScene {
       const enemy = child as Phaser.Physics.Arcade.Sprite;
       if (!enemy.active) return;
       this.updateEnemyBehavior(enemy, delta);
+    });
+  }
+
+  private updatePlayerBullets(_delta: number): void {
+    this.bullets.getChildren().forEach((child) => {
+      const bullet = child as Phaser.Physics.Arcade.Sprite;
+      if (!bullet.active) return;
+      const isHoming = bullet.getData('homing') === true;
+      if (!isHoming) return;
+
+      const body = bullet.body as Phaser.Physics.Arcade.Body | null;
+      const speed =
+        (bullet.getData('speed') as number) ||
+        (body ? Math.hypot(body.velocity.x, body.velocity.y) : 0);
+      if (!speed || !Number.isFinite(speed)) {
+        return;
+      }
+
+      let target: Phaser.Physics.Arcade.Sprite | null = null;
+      let bestDistSq = Number.POSITIVE_INFINITY;
+      this.enemies.getChildren().forEach((enemyChild) => {
+        const enemy = enemyChild as Phaser.Physics.Arcade.Sprite;
+        if (!enemy.active) return;
+        const dx = enemy.x - bullet.x;
+        const dy = enemy.y - bullet.y;
+        const distSq = dx * dx + dy * dy;
+        if (distSq < bestDistSq) {
+          bestDistSq = distSq;
+          target = enemy;
+        }
+      });
+
+      const targetSprite = target as Phaser.Physics.Arcade.Sprite | null;
+      if (!targetSprite) return;
+
+      const angle = Phaser.Math.Angle.Between(bullet.x, bullet.y, targetSprite.x, targetSprite.y);
+      bullet.setVelocity(Math.cos(angle) * speed, Math.sin(angle) * speed);
     });
   }
 
@@ -1043,13 +1389,25 @@ export class ArcadeScene extends VerticalBaseScene {
       return;
     }
 
-    bullet.destroy();
+    const damage = (bullet.getData('damage') as number) || 1;
+    const isPiercing = bullet.getData('piercing') === true;
+    if (isPiercing) {
+      let pierceLeft = (bullet.getData('pierceLeft') as number) ?? 1;
+      pierceLeft -= 1;
+      if (pierceLeft <= 0) {
+        bullet.destroy();
+      } else {
+        bullet.setData('pierceLeft', pierceLeft);
+      }
+    } else {
+      bullet.destroy();
+    }
     const shieldUntil = enemy.getData('shieldUntil') as number | undefined;
     if (shieldUntil && this.time.now < shieldUntil) {
       return;
     }
     let hp = (enemy.getData('hp') as number | undefined) ?? 1;
-    hp -= 1;
+    hp -= damage;
     if (hp <= 0) {
       const dropChance = (enemy.getData('dropsPowerUpChance') as number | undefined) ?? 0.25;
       this.updateScore(Math.round(25 * this.comboMultiplier));

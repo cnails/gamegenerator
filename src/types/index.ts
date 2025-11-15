@@ -307,6 +307,10 @@ export interface ArcadeVariantSettings {
   waves: ArcadeWaveDefinition[];
   enemyProfiles: ArcadeEnemyProfile[];
   powerUps: ArcadePowerUpProfile[];
+  playerWeapons: PlayerWeaponProfile[];
+  heroHulls: HeroHullProfile[];
+  defaultWeaponId?: string;
+  defaultHullId?: string;
 }
 
 export type ArcadeWeaponType = 'laser' | 'burst' | 'spread';
@@ -317,6 +321,34 @@ export interface ArcadeWeaponProfile {
   cooldownModifier?: number;
   burstCount?: number;
   spreadAngle?: number;
+}
+
+export type PlayerWeaponType = 'standard' | 'rapid' | 'spread' | 'burst' | 'piercing' | 'homing';
+
+export interface PlayerWeaponProfile {
+  id: string;
+  name: string;
+  description: string;
+  type: PlayerWeaponType;
+  projectileSpeed: number;
+  cooldown: number;
+  damage: number;
+  spreadAngle?: number;
+  burstCount?: number;
+  projectileCount?: number;
+}
+
+export type HeroHullType = 'light' | 'medium' | 'heavy' | 'agile' | 'tank';
+
+export interface HeroHullProfile {
+  id: string;
+  name: string;
+  description: string;
+  type: HeroHullType;
+  healthModifier: number;
+  speedModifier: number;
+  sizeModifier: number;
+  specialAbility?: string;
 }
 
 export type ArcadeAbilityType = 'dash' | 'shieldPulse' | 'drone';

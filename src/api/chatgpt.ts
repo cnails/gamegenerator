@@ -253,6 +253,11 @@ ${userPrompt}`;
 
   private async enrichGameWithSprites(config: GameConfig, gameData: GeneratedGameData): Promise<void> {
     try {
+      console.info('[SpriteGen] Начинаем генерацию спрайтов...', {
+        title: gameData.title,
+        template: config.template,
+      });
+      
       const plan = await this.generateSpritePlan(config, gameData);
       if (!plan || !plan.sprites?.length) {
         console.info(
@@ -267,16 +272,33 @@ ${userPrompt}`;
         return;
       }
 
-      const spriteSheets: SpriteAsset[] = [];
-      for (const entry of plan.sprites) {
-        const svg = await this.generateSpriteSvg(entry, plan.styleGuide, gameData);
-        if (!svg) continue;
+      console.info('[SpriteGen] План получен, начинаем генерацию SVG спрайтов...', {
+        spriteCount: plan.sprites.length,
+        spriteIds: plan.sprites.map((s) => s.id),
+      });
 
-        spriteSheets.push({
-          meta: entry,
-          svg,
-          viewBox: this.extractViewBox(svg, entry.size),
-        });
+      const spriteSheets: SpriteAsset[] = [];
+      for (let i = 0; i < plan.sprites.length; i++) {
+        const entry = plan.sprites[i];
+        console.info(`[SpriteGen] Генерируем SVG для спрайта ${i + 1}/${plan.sprites.length}: ${entry.id} (${entry.role})`);
+        
+        try {
+          const svg = await this.generateSpriteSvg(entry, plan.styleGuide, gameData);
+          if (!svg) {
+            console.warn(`[SpriteGen] SVG для ${entry.id} не был сгенерирован (вернулся null)`);
+            continue;
+          }
+
+          spriteSheets.push({
+            meta: entry,
+            svg,
+            viewBox: this.extractViewBox(svg, entry.size),
+          });
+          console.info(`[SpriteGen] SVG для ${entry.id} успешно сгенерирован (${svg.length} символов)`);
+        } catch (spriteError) {
+          console.error(`[SpriteGen] Ошибка при генерации SVG для ${entry.id}:`, spriteError);
+          // Продолжаем генерацию остальных спрайтов даже если один не удался
+        }
       }
 
       // Если герой описан в плане, но ни один hero-спрайт не удалось получить от LLM — создаём простой fallback SVG
@@ -309,6 +331,7 @@ ${userPrompt}`;
         template: config.template,
         spriteCount: spriteSheets.length,
         plannedSprites: plan.sprites.length,
+        generatedSpriteIds: spriteSheets.map((s) => s.meta.id),
       });
 
       gameData.assets = {
@@ -321,8 +344,16 @@ ${userPrompt}`;
           animationNotes: plan.animationNotes ?? [],
         },
       };
+      
+      console.info('[SpriteGen] Assets успешно добавлены в gameData', {
+        assetsExists: Boolean(gameData.assets),
+        spriteSheetsCount: gameData.assets?.spriteKit?.spriteSheets?.length ?? 0,
+      });
     } catch (error) {
-      console.warn('Ошибка генерации спрайтов, этап пропущен:', error);
+      console.error('[SpriteGen] Критическая ошибка генерации спрайтов, этап пропущен:', error);
+      if (error instanceof Error) {
+        console.error('[SpriteGen] Stack trace:', error.stack);
+      }
     }
   }
 
@@ -531,6 +562,8 @@ ${this.getTemplateSpecificSpriteRequirements(config)}
     const prompt = this.buildSpriteSvgPrompt(entry, styleGuide, gameData);
 
     try {
+      console.debug(`[SpriteGen] Отправляем запрос на генерацию SVG для ${entry.id}...`);
+      
       const content = await this.callChatCompletion(
         [
           {
@@ -547,14 +580,22 @@ ${this.getTemplateSpecificSpriteRequirements(config)}
         },
       );
 
+      console.debug(`[SpriteGen] Получен ответ для ${entry.id}, длина: ${content.length} символов`);
+
       const svg = this.extractSvg(content);
       if (!svg) {
-        console.warn(`SVG для спрайта ${entry.id}: блок <svg> не найден, см. превью в debug логах.`);
+        console.warn(`[SpriteGen] SVG для спрайта ${entry.id}: блок <svg> не найден в ответе, см. превью в debug логах.`);
         this.debugSpritePayload(`svg.${entry.id}.no-svg`, content);
+        return null;
       }
+      
+      console.debug(`[SpriteGen] SVG для ${entry.id} успешно извлечён, длина: ${svg.length} символов`);
       return svg;
     } catch (error) {
-      console.warn(`SVG для спрайта ${entry.id} не создан:`, error);
+      console.error(`[SpriteGen] Ошибка при генерации SVG для спрайта ${entry.id}:`, error);
+      if (error instanceof Error) {
+        console.error(`[SpriteGen] Stack trace для ${entry.id}:`, error.stack);
+      }
       return null;
     }
   }
@@ -657,10 +698,14 @@ ${animationDetails}
 - codename и briefing — короткое кодовое имя операции и описание ситуации (2-3 предложения).
 - comboName и comboDecaySeconds (1.2-4.5) — как называется множитель и через сколько секунд он обнуляется.
 - objective — { type: 'survive' | 'score', description, survivalTime (60-240)?, targetScore (400-2400)?, bonusOnComplete }.
-- enemyProfiles — минимум 3 профиля { id, name, description, pattern ('basic'|'zigzag'|'tank'), hp (1-5), speedMultiplier (0.7-1.6), fireRateMultiplier (0.6-1.5), dropsPowerUpChance (0.1-0.6) }.
 - enemyProfiles — минимум 3 профиля { id, name, description, pattern ('basic'|'zigzag'|'tank'), hp (1-5), speedMultiplier (0.7-1.6), fireRateMultiplier (0.6-1.5), dropsPowerUpChance (0.1-0.6), weapon: { type ('laser'|'burst'|'spread'), projectileSpeed (180-360), cooldownModifier (0.7-1.5), burstCount?, spreadAngle? }, ability?: { type ('dash'|'shieldPulse'|'drone'), description, cooldown (2-6), duration? } }.
 - waves — минимум 2 волны { id, name, description, durationSeconds (15-45), spawnRate (0.6-2.4), speedMultiplier (0.8-1.5), fireRateMultiplier (0.7-1.4), enemyMix: [{ enemyId, weight (1-6) }] }.
 - powerUps — минимум 2 усиления { id, name, effect ('shield'|'rapid'|'spread'), duration (4-9), description, dropChance (0.1-0.45) }.
+- playerWeapons — минимум 3-4 типа оружия для игрока { id, name, description, type ('standard'|'rapid'|'spread'|'burst'|'piercing'|'homing'), projectileSpeed (380-480), cooldown (100-400), damage (1-2), spreadAngle? (для spread), burstCount? (для burst), projectileCount? (для spread) }.
+- heroHulls — минимум 3-4 типа корпусов героя { id, name, description, type ('light'|'medium'|'heavy'|'agile'|'tank'), healthModifier (0.7-1.8), speedModifier (0.7-1.5), sizeModifier (0.8-1.3), specialAbility? }.
+- defaultWeaponId и defaultHullId — id оружия и корпуса по умолчанию (должны существовать в массивах playerWeapons и heroHulls).
+
+ВАЖНО: fireRateMultiplier для врагов должен быть в диапазоне 0.6-1.5, но предпочтительно 0.7-1.0 (враги должны стрелять реже для упрощения игры).
 
 Цветовые поля пока не нужны — сосредоточься на поведении и параметрах.`;
       case GameTemplate.PUZZLE:
