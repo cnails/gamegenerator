@@ -1,10 +1,12 @@
 import { MainScreen } from './ui/MainScreen';
 import { GameManager } from './core/GameManager';
+import { GameContainer } from './core/GameContainer';
 import type { GeneratedGame } from './types';
 import { GameStorage } from './storage/GameStorage';
 
 let mainScreen: MainScreen;
 let gameManager: GameManager;
+let gameContainer: GameContainer | null = null;
 
 function renderMainScreen(): void {
   mainScreen = new MainScreen('app');
@@ -24,35 +26,48 @@ function init(): void {
   }) as EventListener);
 
   // Обработчик завершения игры
-  gameManager.setOnGameEnd((score, rewards) => {
-    const game = GameStorage.getGame((window as unknown as { currentGameId?: string }).currentGameId || '');
-    if (game) {
-      game.score = score;
-      if (score > game.highScore) {
-        game.highScore = score;
-      }
-      game.rewards += rewards;
-      GameStorage.saveGame(game);
-    }
-
-    // Возвращаемся на главный экран
-    renderMainScreen();
-  });
+  gameManager.setOnGameEnd(handleGameEnd);
 }
 
 function startGame(game: GeneratedGame): void {
-  // Сохраняем ID текущей игры
-  (window as unknown as { currentGameId?: string }).currentGameId = game.id;
-
-  // Очищаем контейнер
-  const app = document.getElementById('app');
-  if (app) {
-    app.innerHTML = '';
-    app.classList.add('game-mode');
+  const games = GameStorage.getAllGames();
+  if (!games.length) {
+    return;
   }
 
-  // Запускаем игру
-  gameManager.startGame(game, 'app');
+  if (!gameContainer) {
+    gameContainer = new GameContainer({
+      containerId: 'app',
+      gameManager,
+      onExit: teardownGameSession,
+    });
+  }
+
+  gameContainer.setGames(games, game.id);
+}
+
+function handleGameEnd(score: number, rewards: number): void {
+  const currentId = (window as unknown as { currentGameId?: string }).currentGameId || '';
+  const currentGame = GameStorage.getGame(currentId);
+
+  if (currentGame) {
+    currentGame.score = score;
+    if (score > currentGame.highScore) {
+      currentGame.highScore = score;
+    }
+    currentGame.rewards += rewards;
+    GameStorage.saveGame(currentGame);
+  }
+
+  teardownGameSession();
+}
+
+function teardownGameSession(): void {
+  if (gameContainer) {
+    gameContainer.destroy();
+    gameContainer = null;
+  }
+  renderMainScreen();
 }
 
 // Запускаем приложение

@@ -7,7 +7,6 @@ import { ArcadeScene } from '@/scenes/templates/ArcadeScene';
 import { PuzzleScene } from '@/scenes/templates/PuzzleScene';
 import { TowerDefenseScene } from '@/scenes/templates/TowerDefenseScene';
 import { VerticalStandardScene } from '@/scenes/templates/VerticalStandardScene';
-import { RoguelikeScene } from '@/scenes/templates/RoguelikeScene';
 
 export class GameManager {
   private phaserGame: Phaser.Game | null = null;
@@ -90,8 +89,6 @@ export class GameManager {
         return TowerDefenseScene;
       case GameTemplate.VERTICAL_STANDARD:
         return VerticalStandardScene;
-      case GameTemplate.ROGUELIKE:
-        return RoguelikeScene;
       default:
         throw new Error(`Unknown template: ${template}`);
     }
