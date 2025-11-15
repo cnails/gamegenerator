@@ -137,6 +137,42 @@ export const gameTemplates: GameTemplateDefinition[] = [
       },
     ],
   },
+  {
+    id: GameTemplate.ROGUELIKE,
+    name: 'Roguelike выживание',
+    description:
+      'Автобаттлер в стиле survivor-like: герой с автоатаками против волн врагов, только движение, без кнопки атаки',
+    defaultParams: {
+      duration: 600,
+      density: 1,
+      challengePrompt: '',
+    },
+    paramFields: [
+      {
+        key: 'duration',
+        label: 'Целевая длительность забега (сек)',
+        type: 'number',
+        defaultValue: 600,
+        min: 120,
+        max: 1200,
+      },
+      {
+        key: 'density',
+        label: 'Плотность врагов',
+        type: 'number',
+        defaultValue: 1,
+        min: 0.5,
+        max: 2,
+      },
+      {
+        key: 'challengePrompt',
+        label: 'LLM промпт для челленджа (опционально)',
+        type: 'string',
+        defaultValue: '',
+        multiline: true,
+      },
+    ],
+  },
 ];
 
 export function getTemplateById(id: GameTemplate): GameTemplateDefinition | undefined {

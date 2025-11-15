@@ -53,7 +53,7 @@ export class ChatGPTAPI {
           {
             role: 'system',
             content:
-              'Ты эксперт по созданию 2D-игр. Генерируй JSON с данными игры: title, description, mechanics, visuals (colors, style), levels. Игры должны быть короткими (2-3 минуты) и подходить для мобильных устройств в портретной ориентации.',
+              'Ты эксперт по созданию 2D-игр. Генерируй JSON с данными игры: title, description, mechanics, visuals (colors, style), levels. Игры должны быть короткими (1-2 минуты) и подходить для мобильных устройств в портретной ориентации.',
           },
           { role: 'user', content: prompt },
         ],
@@ -81,6 +81,7 @@ export class ChatGPTAPI {
       [GameTemplate.PUZZLE]: 'головоломка',
       [GameTemplate.TOWER_DEFENSE]: 'башенная оборона',
       [GameTemplate.VERTICAL_STANDARD]: 'вертикальный каркас',
+      [GameTemplate.ROGUELIKE]: 'roguelike выживание (survivor-like с автоатаками)',
     };
 
     const difficultyNames: Record<string, string> = {
@@ -90,7 +91,12 @@ export class ChatGPTAPI {
     };
 
     const extra = this.getTemplateSpecificInstructions(config);
-    const userPromptRaw = config.params?.['variantPrompt'];
+    const userPromptRaw =
+      config.template === GameTemplate.PUZZLE
+        ? config.params?.['variantPrompt']
+        : config.template === GameTemplate.ROGUELIKE
+        ? config.params?.['challengePrompt']
+        : config.params?.['variantPrompt'];
     const userPrompt =
       typeof userPromptRaw === 'string' ? userPromptRaw.trim().slice(0, 1200) : '';
 
@@ -120,7 +126,7 @@ export class ChatGPTAPI {
 - visuals: { colors: массив цветов, style: стиль визуализации }
 - levels: массив уровней или конфигурация уровней
 
-Игра должна быть интересной, но короткой (2-3 минуты).
+Игра должна быть интересной, но короткой (1-2 минуты).
 
 Важно:
 - intensity для scoreMultiplier обычно 1.2–3 (множитель очков),
@@ -605,6 +611,8 @@ ${this.getTemplateSpecificSpriteRequirements(config)}
     styleGuide: SpriteStyleGuide,
     gameData: GeneratedGameData,
   ): string {
+    const isHero = entry.role === 'hero';
+
     const fallbackAnimations: SpriteAnimationCue[] = [
       {
         id: 'idle-static',
@@ -630,6 +638,17 @@ ${this.getTemplateSpecificSpriteRequirements(config)}
     const palette = entry.palette.join(', ');
     const globalPalette = styleGuide.palette.join(', ');
 
+    const heroHighlightBlock = isHero
+      ? `
+ДОПОЛНИТЕЛЬНЫЕ ТРЕБОВАНИЯ ДЛЯ ГЛАВНОГО ГЕРОЯ:
+- Этот спрайт — ГЛАВНЫЙ УПРАВЛЯЕМЫЙ ПЕРСОНАЖ. Он должен ВИЗУАЛЬНО ВЫДЕЛЯТЬСЯ среди остальных.
+- Используй более яркие и контрастные цвета по сравнению с врагами и окружением (если палитра ограничена — выбери самые светлые/насыщенные оттенки именно для героя).
+- Сделай контур героя чуть толще и чётче, чем у обычных объектов, можно добавить внешний контур/ореол одним цветом.
+- Силуэт должен быть максимально читаемым: избегай мелких, «шумных» деталей, фокусируйся на понятной форме тела/корабля.
+- Главная масса пикселей должна находиться ближе к центру viewBox, не заполняй всё поле второстепенными деталями.
+- Если у стиля уместно, добавь лёгкое подсвечивание или акцентный элемент (аура, глаз, кабина, ядро), который сразу привлекает внимание к герою.`
+      : '';
+
     return `Сгенерируй один inline SVG c viewBox="0 0 ${entry.size} ${entry.size}" и width/height=${entry.size} для спрайта "${entry.name}" (${entry.role}).
 Стиль: ${styleGuide.artDirection}. Свет: ${styleGuide.lighting}. Тени: ${styleGuide.shading}. Контур: ${styleGuide.strokeStyle}.
 Дополнительно: ${styleGuide.textureNotes || 'текстуры сдержанные'}.
@@ -650,6 +669,7 @@ ${animationDetails}
 6. Никаких комментариев, markdown и CDATA — только сам <svg>.
 7. Фон оставь прозрачным, но если нужно дать силуэт, используй отдельный слой <g data-layer="shadow">.
 8. Все координаты кратны 1px, избегай дробных значений.
+${heroHighlightBlock}
 `;
   }
 
@@ -720,6 +740,83 @@ ${animationDetails}
 - boardModifiers — { presetName, description, blockedCells?: [{ row, col }] } где row и col нумеруются с 0 и находятся в пределах сетки.
 
 Каждая генерация должна отличаться наборами блоков, бонусами и конфигурацией blockedCells.`;
+      case GameTemplate.ROGUELIKE:
+        return `
+
+Для roguelike survivor-like добавь объект mechanics.roguelikeVariant со структурой:
+- codename и briefing — название забега и краткое сюжетное объяснение, почему герой попал в эту ситуацию.
+- challengeGoal — цель раунда:
+  {
+    "type": "surviveTime" | "reachKillCount" | "collectResources" | "surviveWaves",
+    "description": "объяснение челленджа простым языком",
+    "targetValue": число (секунды / убийства / количество собранного ресурса),
+    "softFailAllowed": опционально, true если провал всё равно засчитывается как завершение, но без бонусов
+  }
+- playerConstraints — 1–3 ограничений/бафов для героя, каждое:
+  {
+    "id": "string",
+    "name": "краткое название условия",
+    "description": "что именно ограничено или усилено",
+    "maxHealthMultiplier": 0.3–2.5,
+    "moveSpeedMultiplier": 0.3–2.0,
+    "attackCooldownMultiplier": 0.3–2.5,
+    "projectileCountBonus": -6..+12,
+    "damageMultiplier": 0.3–3.0,
+    "weaponDisabled": true/false (если true — герой играет вообще без оружия),
+    "allowOnlyMelee": true/false,
+    "allowOnlyAuras": true/false
+  }
+- enemyProfiles — минимум 3 типа врагов:
+  {
+    "id": "string",
+    "name": "название врага",
+    "description": "как он себя ведёт",
+    "pattern": "chaser" | "orbiter" | "charger" | "ranged",
+    "maxHealth": 1–10,
+    "touchDamage": 1–3,
+    "speed": 40–110,
+    "spawnWeight": 1–6
+  }
+- pickupProfiles — 2–4 типа лута:
+  {
+    "id": "string",
+    "name": "название",
+    "description": "что даёт",
+    "type": "heal" | "xp" | "temporaryBuff" | "currency" | "weaponUpgrade",
+    "amount": число (например, сколько HP или XP),
+    "dropChance": 0.25–0.85,
+    // для weaponUpgrade:
+    "upgradeKind": "damage" | "projectile" | "cooldown" | "grantWeapon",
+    "damageBonus": число-множитель урона (например 1.3 для +30%),
+    "projectileBonus": целое число (например +1 снаряд),
+    "cooldownMultiplier": множитель перезарядки (например 0.85 для -15% времени между выстрелами),
+    "grantWeaponId": id оружия из массива weapons,
+    "rare": true/false (редкие апгрейды, которые должны быть визуально заметны),
+    // для temporaryBuff:
+    "moveSpeedBonusMultiplier": множитель скорости передвижения (например 1.2 для +20%),
+    "maxHealthBonusFlat": добавочное здоровье (например +1-2),
+    "maxHealthBonusMultiplier": множитель максимального HP (например 1.3 для +30%)
+  }
+- weapons — минимум 3 вида авто-оружия:
+  {
+    "id": "string",
+    "name": "название оружия",
+    "description": "как оно атакует",
+    "kind": "basic" | "orbit" | "nova" | "chain",
+    "baseDamage": 1–8,
+    "baseCooldownMs": 300–3000,
+    "projectileCount": 1–24,
+    "range": 40–260,
+    "projectileSpeed": 80–320 (для basic/nova/chain, для orbit можно 0),
+    "chainTargets": 2–6 (только для kind="chain")
+  }
+- defaultWeaponId — id оружия, с которого герой стартует (должен существовать в массиве weapons).
+- baseDurationSeconds — желаемая длительность забега для цели "surviveTime" (90–900 секунд).
+
+Важно:
+- никаких кнопок атаки. Герой только двигается, атаки и заклинания всегда автоматические.
+- баланс должен быть слегка в пользу игрока: враги не должны ваншотать, общее количество врагов на экране ограничено, а бонусы/подборы (особенно weaponUpgrade и temporaryBuff с бафами скорости/здоровья) появляются заметно чаще, чем в классических roguelike.
+- делай режимы разнообразными: иногда герой почти неподвижен, но с очень сильными орбитальными аурами; иногда — быстрый, но с хрупким здоровьем; иногда — вообще без оружия, только с лутом и хитрыми врагами.`;
       default:
         return '';
     }
@@ -735,6 +832,8 @@ ${animationDetails}
         return `- Для башенной обороны: hero может отсутствовать (игра без управляемого персонажа), но если нужен, то это может быть база или защищаемый объект (role=environment).`;
       case GameTemplate.PUZZLE:
         return `- Для головоломки: hero может отсутствовать, так как игра обычно без управляемого персонажа.`;
+      case GameTemplate.ROGUELIKE:
+        return `- Для roguelike survivor-like: hero — персонаж сверху-вниз, вокруг которого летают авто-атаки. Нужны анимации idle и move, но НЕТ анимации ручной атаки (атаки происходят автоматически по таймеру).`;
       default:
         return `- Hero должен соответствовать тематике игры и быть управляемым объектом.`;
     }
