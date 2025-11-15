@@ -610,21 +610,18 @@ export class PlatformerScene extends VerticalBaseScene {
 
   private createPlayer(x: number, y: number): void {
     const llmTextureById = this.getLlmTextureKey({ id: 'hero-player' });
-    const llmTexture = llmTextureById ?? this.getLlmTextureKey({ role: 'hero' });
+    const llmTextureByRole = this.getLlmTextureKey({ role: 'hero' });
+    const llmTexture = llmTextureById ?? llmTextureByRole;
 
-    if (this.hasLlmSpriteKit()) {
-      console.info('[SpriteKit][Platformer] Выбор текстуры героя.', {
-        hasSpriteKit: true,
-        llmTextureById,
-        llmTextureByRole: llmTextureById ? undefined : this.getLlmTextureKey({ role: 'hero' }),
-      });
-    }
+    // Проверяем, существует ли текстура в Phaser перед использованием
+    const textureKey = llmTexture && this.textures.exists(llmTexture) 
+      ? llmTexture 
+      : this.ensureTexture('player', 36, 36, this.theme.player);
 
-    const textureKey = llmTexture ?? this.ensureTexture('player', 36, 36, this.theme.player);
     this.player = this.physics.add.sprite(x, y, textureKey);
     this.player.setBounce(0.2);
     this.player.setCollideWorldBounds(true);
-    if (llmTexture) {
+    if (llmTexture && this.textures.exists(llmTexture)) {
       this.fitSpriteToLlmMeta(this.player, llmTexture, { bodyWidthRatio: 0.58, bodyHeightRatio: 0.85 });
     } else {
       this.player.setSize(28, 32);

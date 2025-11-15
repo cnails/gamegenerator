@@ -435,10 +435,6 @@ export abstract class BaseGameScene extends Phaser.Scene {
     const payload = this.gameData?.gameData as GeneratedGameData | undefined;
     const kit = payload?.assets?.spriteKit;
     if (!kit || !kit.spriteSheets?.length) {
-      console.info('[SpriteKit] Набор LLM-спрайтов отсутствует или пустой.', {
-        hasAssets: Boolean(payload?.assets),
-        spriteSheets: kit?.spriteSheets?.length ?? 0,
-      });
       return;
     }
 
@@ -450,12 +446,14 @@ export abstract class BaseGameScene extends Phaser.Scene {
       }
 
       const textureKey = `llm-${this.gameData.id}-${sheet.meta.id}`;
-      if (this.textures.exists(textureKey)) {
-        this.textures.remove(textureKey);
-      }
-
+      
       try {
-        this.textures.addBase64(textureKey, this.svgToDataUrl(sheet.svg));
+        const dataUrl = this.svgToDataUrl(sheet.svg);
+        
+        // Используем load.image с data URL для правильной загрузки через систему Phaser
+        this.load.image(textureKey, dataUrl);
+        
+        // Сохраняем информацию о текстуре для последующего использования
         this.llmTexturesById.set(sheet.meta.id, textureKey);
         this.llmMetaByTextureKey.set(textureKey, sheet.meta);
 
@@ -463,18 +461,8 @@ export abstract class BaseGameScene extends Phaser.Scene {
         roleList.push(textureKey);
         this.llmTexturesByRole.set(sheet.meta.role, roleList);
       } catch (error) {
-        console.warn('[SpriteKit] Не удалось загрузить SVG текстуру', sheet.meta?.id, error);
+        // Игнорируем ошибки загрузки отдельных текстур
       }
-    });
-
-    console.info('[SpriteKit] Набор LLM-спрайтов загружен.', {
-      gameId: this.gameData.id,
-      title: this.gameData.title,
-      totalTextures: this.llmTexturesById.size,
-      roles: Array.from(this.llmTexturesByRole.entries()).map(([role, list]) => ({
-        role,
-        count: list.length,
-      })),
     });
   }
 
