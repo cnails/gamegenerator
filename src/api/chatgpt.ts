@@ -1,9 +1,37 @@
-import type { GameConfig, GeneratedGameData } from '@/types';
+import type {
+  GameConfig,
+  GeneratedGameData,
+  SpriteAnimationCue,
+  SpriteAsset,
+  SpritePlanEntry,
+  SpriteStyleGuide,
+} from '@/types';
 import { GameTemplate } from '@/types';
+
+interface ChatCompletionOptions {
+  temperature?: number;
+  maxTokens?: number;
+  model?: string;
+  responseFormat?: {
+    type: 'json_object';
+  };
+}
+
+interface SpritePlanResponse {
+  styleGuide: SpriteStyleGuide;
+  animationNotes?: string[];
+  sprites: SpritePlanEntry[];
+}
+
+type ChatMessage = {
+  role: 'system' | 'user';
+  content: string;
+};
 
 export class ChatGPTAPI {
   private apiKey: string;
   private baseUrl: string = 'https://api.openai.com/v1/chat/completions';
+  private readonly defaultModel = 'gpt-4o';
 
   constructor(apiKey?: string) {
     this.apiKey = apiKey || '';
@@ -18,56 +46,30 @@ export class ChatGPTAPI {
       throw new Error('API ключ не установлен');
     }
 
-    const prompt = this.buildPrompt(config);
-
     try {
-      const response = await fetch(this.baseUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${this.apiKey}`,
-        },
-        body: JSON.stringify({
-          model: 'gpt-4',
-          messages: [
-            {
-              role: 'system',
-              content:
-                'Ты эксперт по созданию 2D-игр. Генерируй JSON с данными игры: title, description, mechanics, visuals (colors, style), levels. Игры должны быть короткими (2-3 минуты) и подходить для мобильных устройств в портретной ориентации.',
-            },
-            {
-              role: 'user',
-              content: prompt,
-            },
-          ],
-          temperature: 0.8,
-          max_tokens: 2000,
-        }),
-      });
+      const prompt = this.buildPrompt(config);
+      const content = await this.callChatCompletion(
+        [
+          {
+            role: 'system',
+            content:
+              'Ты эксперт по созданию 2D-игр. Генерируй JSON с данными игры: title, description, mechanics, visuals (colors, style), levels. Игры должны быть короткими (2-3 минуты) и подходить для мобильных устройств в портретной ориентации.',
+          },
+          { role: 'user', content: prompt },
+        ],
+        { temperature: 0.8, maxTokens: 2000 },
+      );
 
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(`API Error: ${error.error?.message || 'Unknown error'}`);
-      }
-
-      const data = await response.json();
-      const content = data.choices[0]?.message?.content;
-
-      if (!content) {
-        throw new Error('Пустой ответ от API');
-      }
-
-      // Пытаемся извлечь JSON из ответа
-      const jsonMatch = content.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) {
+      const jsonPayload = this.extractJsonBlock(content);
+      if (!jsonPayload) {
         throw new Error('Не удалось найти JSON в ответе');
       }
 
-      const gameData = JSON.parse(jsonMatch[0]) as GeneratedGameData;
+      const gameData = JSON.parse(jsonPayload) as GeneratedGameData;
+      await this.enrichGameWithSprites(config, gameData);
       return gameData;
     } catch (error) {
       console.error('ChatGPT API Error:', error);
-      // Возвращаем данные по умолчанию в случае ошибки
       return this.getDefaultGameData(config);
     }
   }
@@ -112,6 +114,407 @@ ${userPrompt}`;
     }
 
     return prompt;
+  }
+
+  private async callChatCompletion(messages: ChatMessage[], options: ChatCompletionOptions = {}): Promise<string> {
+    if (!this.apiKey) {
+      throw new Error('API ключ не установлен');
+    }
+
+    const modelName = options.model ?? this.defaultModel;
+    const canUseResponseFormat = Boolean(
+      options.responseFormat && this.supportsResponseFormat(modelName),
+    );
+
+    const payload: Record<string, unknown> = {
+      model: modelName,
+      messages,
+      temperature: options.temperature ?? 0.8,
+      max_tokens: options.maxTokens ?? 2000,
+    };
+
+    if (canUseResponseFormat && options.responseFormat) {
+      payload.response_format = options.responseFormat;
+    }
+
+    const response = await fetch(this.baseUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${this.apiKey}`,
+      },
+      body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+      let message = 'Unknown error';
+      try {
+        const error = await response.json();
+        message = error.error?.message || message;
+        if (canUseResponseFormat &&
+          options.responseFormat &&
+          typeof message === 'string' &&
+          message.toLowerCase().includes('response_format')
+        ) {
+          console.warn('Модель не поддерживает response_format, повторяем запрос без него.');
+          const { responseFormat, ...rest } = options;
+          return this.callChatCompletion(messages, rest);
+        }
+      } catch {
+        // no-op
+      }
+      throw new Error(`API Error: ${message}`);
+    }
+
+    const data = await response.json();
+    const content = data.choices?.[0]?.message?.content;
+    if (!content) {
+      throw new Error('Пустой ответ от API');
+    }
+
+    return content;
+  }
+
+  private extractJsonBlock(text: string): string | null {
+    const match = text.match(/\{[\s\S]*\}/);
+    return match ? match[0] : null;
+  }
+
+  private extractSvg(text: string): string | null {
+    const match = text.match(/<svg[\s\S]*<\/svg>/i);
+    return match ? match[0].trim() : null;
+  }
+
+  private extractViewBox(svg: string, fallbackSize: number): string {
+    const match = svg.match(/viewBox="([^"]+)"/i);
+    if (match?.[1]) {
+      return match[1];
+    }
+    const widthMatch = svg.match(/width="([\d.]+)"/i);
+    const heightMatch = svg.match(/height="([\d.]+)"/i);
+    const width = Number(widthMatch?.[1]) || fallbackSize;
+    const height = Number(heightMatch?.[1]) || fallbackSize;
+    return `0 0 ${width} ${height}`;
+  }
+
+  private async enrichGameWithSprites(config: GameConfig, gameData: GeneratedGameData): Promise<void> {
+    try {
+      const plan = await this.generateSpritePlan(config, gameData);
+      if (!plan || !plan.sprites?.length) {
+        return;
+      }
+
+      const spriteSheets: SpriteAsset[] = [];
+      for (const entry of plan.sprites) {
+        const svg = await this.generateSpriteSvg(entry, plan.styleGuide, gameData);
+        if (!svg) continue;
+
+        spriteSheets.push({
+          meta: entry,
+          svg,
+          viewBox: this.extractViewBox(svg, entry.size),
+        });
+      }
+
+      if (!spriteSheets.length) {
+        return;
+      }
+
+      gameData.assets = {
+        artPipeline: 'llm-svg-16bit',
+        generatedAt: new Date().toISOString(),
+        spriteKit: {
+          styleGuide: plan.styleGuide,
+          spritePlan: plan.sprites,
+          spriteSheets,
+          animationNotes: plan.animationNotes ?? [],
+        },
+      };
+    } catch (error) {
+      console.warn('Ошибка генерации спрайтов, этап пропущен:', error);
+    }
+  }
+
+  private async generateSpritePlan(
+    config: GameConfig,
+    gameData: GeneratedGameData,
+  ): Promise<SpritePlanResponse | null> {
+    const prompt = this.buildSpritePlanPrompt(config, gameData);
+
+    try {
+      const content = await this.callChatCompletion(
+        [
+          {
+            role: 'system',
+            content:
+              'Ты арт-директор 16-битных игр. Планируй стили и опиши, какие спрайты нужны, обязательно отмечай необходимость анимации.',
+          },
+          { role: 'user', content: prompt },
+        ],
+        {
+          temperature: 0.65,
+          maxTokens: 2200,
+          responseFormat: { type: 'json_object' },
+        },
+      );
+
+      const jsonPayload = this.extractJsonBlock(content);
+      if (!jsonPayload) {
+        console.warn('План спрайтов: JSON блок не найден, см. превью в debug логах.');
+        this.debugSpritePayload('plan.no-json', content);
+        return null;
+      }
+
+      try {
+        const plan = JSON.parse(jsonPayload) as SpritePlanResponse;
+        
+        // Проверяем наличие hero спрайта для шаблонов, где он обязателен
+        const requiresHero = config.template === GameTemplate.ARCADE || config.template === GameTemplate.PLATFORMER;
+        const hasHero = plan.sprites?.some((s) => s.role === 'hero');
+        
+        if (requiresHero && !hasHero) {
+          console.warn(`[SpritePlan] Hero спрайт отсутствует для шаблона ${config.template}! Добавляю базовый hero спрайт.`);
+          if (!plan.sprites) {
+            plan.sprites = [];
+          }
+          
+          // Определяем описание hero в зависимости от шаблона
+          let heroDescription = 'Управляемый игроком персонаж';
+          let heroName = 'Главный герой';
+          if (config.template === GameTemplate.ARCADE) {
+            heroDescription = 'Космический корабль игрока, управляемый снизу экрана';
+            heroName = 'Корабль игрока';
+          } else if (config.template === GameTemplate.PLATFORMER) {
+            heroDescription = 'Персонаж игрока, который может прыгать и бегать';
+            heroName = 'Игрок';
+          }
+          
+          // Добавляем базовый hero спрайт
+          plan.sprites.unshift({
+            id: 'hero-player',
+            role: 'hero',
+            name: heroName,
+            description: heroDescription,
+            palette: plan.styleGuide?.palette?.slice(0, 3) || ['#4caf50', '#ffffff', '#000000'],
+            size: 48,
+            usage: 'Основной управляемый объект игры',
+            requiresAnimation: true,
+            animations: [
+              {
+                id: 'idle',
+                name: 'Idle',
+                type: 'idle',
+                frames: 2,
+                frameDurationMs: 120,
+                loop: true,
+                description: 'Легкое покачивание или мерцание в покое',
+              },
+              {
+                id: 'move',
+                name: 'Move',
+                type: 'move',
+                frames: 2,
+                frameDurationMs: 100,
+                loop: true,
+                description: 'Движение при перемещении',
+              },
+              ...(config.template === GameTemplate.ARCADE
+                ? [
+                    {
+                      id: 'attack',
+                      name: 'Attack',
+                      type: 'attack' as const,
+                      frames: 1,
+                      frameDurationMs: 50,
+                      loop: false,
+                      description: 'Вспышка при выстреле',
+                    },
+                  ]
+                : []),
+            ],
+          });
+        }
+        
+        return plan;
+      } catch (parseError) {
+        console.warn('План спрайтов: ошибка парсинга JSON, см. превью в debug логах.');
+        this.debugSpritePayload('plan.invalid-json', jsonPayload);
+        throw parseError;
+      }
+    } catch (error) {
+      console.warn('Не удалось построить план спрайтов:', error);
+      return null;
+    }
+  }
+
+  private buildSpritePlanPrompt(config: GameConfig, gameData: GeneratedGameData): string {
+    const mechanicsSummary = JSON.stringify(gameData.mechanics ?? {}, null, 2);
+    const visualsSummary = JSON.stringify(gameData.visuals ?? {}, null, 2);
+    const paramsSummary = JSON.stringify(config.params ?? {}, null, 2);
+
+    return `Нужно продумать 16-битный SVG набор спрайтов для мобильной игры.
+
+Данные игры:
+- Title: ${gameData.title}
+- Description: ${gameData.description}
+- Mechanics: ${mechanicsSummary}
+- Visuals: ${visualsSummary}
+- Template: ${config.template}
+- Difficulty: ${config.difficulty}
+- User params: ${paramsSummary}
+
+Сгенерируй JSON следующего вида:
+{
+  "styleGuide": {
+    "artDirection": "краткое описание 16-битного стиля",
+    "palette": ["#hex", ...],
+    "lighting": "как вести свет",
+    "shading": "как имитировать глубину",
+    "strokeStyle": "как рисовать контур",
+    "background": "опционально",
+    "textureNotes": "опционально"
+  },
+  "animationNotes": [
+    "Общие рекомендации по анимации и где она обязательна"
+  ],
+  "sprites": [
+    {
+      "id": "string",
+      "role": "hero|enemy|boss|bonus|projectile|effect|environment|ui",
+      "name": "краткое название",
+      "description": "что изображено",
+      "palette": ["#hex"],
+      "size": 48,
+      "usage": "где применяется",
+      "requiresAnimation": true,
+      "animations": [
+        {
+          "id": "idle",
+          "name": "Idle",
+          "type": "idle|move|attack|cast|hit|death|effect|spawn",
+          "frames": 2,
+          "frameDurationMs": 120,
+          "loop": true,
+          "description": "что должно двигаться"
+        }
+      ],
+      "fxNotes": "опционально"
+    }
+  ]
+}
+
+ОБЯЗАТЕЛЬНЫЕ роли и количества (все должны быть включены в массив sprites):
+- ОБЯЗАТЕЛЬНО: 1 главный герой (role=hero) — это управляемый игроком персонаж/корабль/объект. Должен иметь минимум анимации idle и move, для боевых игр также attack. Без этого спрайта игра не будет работать!
+- минимум 3 уникальных врага (role=enemy) с описанием поведения
+- 1 босс или элитный враг (role=boss)
+- минимум 2 бонуса/пауэрап (role=bonus) с анимацией мерцания
+- минимум 2 эффекта атаки / снаряда (role=projectile или effect)
+- минимум 1 объект окружения или декоративный элемент (role=environment)
+
+КРИТИЧЕСКИ ВАЖНО: Спрайт с role=hero должен быть первым в списке или явно помечен как главный герой. Без него игра не сможет отобразить управляемый объект!
+
+Шаблон-специфичные требования:
+${this.getTemplateSpecificSpriteRequirements(config)}
+
+Все размеры (size) выбирай из множества [48, 56, 64, 80], придерживайся кратности 8px.
+Поле requiresAnimation = true, если указано больше 1 кадра или визуал должен пульсировать.
+Каждое описание анимации должно явно говорить, что именно движется, чтобы разработчик понимал, что анимировать.
+`;
+  }
+
+  private async generateSpriteSvg(
+    entry: SpritePlanEntry,
+    styleGuide: SpriteStyleGuide,
+    gameData: GeneratedGameData,
+  ): Promise<string | null> {
+    const prompt = this.buildSpriteSvgPrompt(entry, styleGuide, gameData);
+
+    try {
+      const content = await this.callChatCompletion(
+        [
+          {
+            role: 'system',
+            content:
+              'Ты художник-спрайтер 16-битных игр. Возвращай только чистый SVG без пояснений и markdown. Соблюдай пиксельную сетку.',
+          },
+          { role: 'user', content: prompt },
+        ],
+        { temperature: 0.35, maxTokens: 1400 },
+      );
+
+      const svg = this.extractSvg(content);
+      if (!svg) {
+        console.warn(`SVG для спрайта ${entry.id}: блок <svg> не найден, см. превью в debug логах.`);
+        this.debugSpritePayload(`svg.${entry.id}.no-svg`, content);
+      }
+      return svg;
+    } catch (error) {
+      console.warn(`SVG для спрайта ${entry.id} не создан:`, error);
+      return null;
+    }
+  }
+
+  private buildSpriteSvgPrompt(
+    entry: SpritePlanEntry,
+    styleGuide: SpriteStyleGuide,
+    gameData: GeneratedGameData,
+  ): string {
+    const fallbackAnimations: SpriteAnimationCue[] = [
+      {
+        id: 'idle-static',
+        name: 'Idle',
+        type: 'idle',
+        frames: 1,
+        frameDurationMs: 160,
+        loop: true,
+        description: 'Легкое мерцание силуэта для статичной позы.',
+      },
+    ];
+
+    const animations: SpriteAnimationCue[] =
+      entry.animations && entry.animations.length > 0 ? entry.animations : fallbackAnimations;
+
+    const animationDetails = animations
+      .map(
+        (anim) =>
+          `- ${anim.id} (${anim.type}): ${anim.frames} кадр(ов) по ${anim.frameDurationMs}мс, loop=${anim.loop}. ${anim.description}`,
+      )
+      .join('\n');
+
+    const palette = entry.palette.join(', ');
+    const globalPalette = styleGuide.palette.join(', ');
+
+    return `Сгенерируй один inline SVG c viewBox="0 0 ${entry.size} ${entry.size}" и width/height=${entry.size} для спрайта "${entry.name}" (${entry.role}).
+Стиль: ${styleGuide.artDirection}. Свет: ${styleGuide.lighting}. Тени: ${styleGuide.shading}. Контур: ${styleGuide.strokeStyle}.
+Дополнительно: ${styleGuide.textureNotes || 'текстуры сдержанные'}.
+Описание объекта: ${entry.description}.
+Использование: ${entry.usage}.
+Контекст игры: ${gameData.title} — ${gameData.description}.
+Основная палитра: ${palette || globalPalette}. Доп. палитра (при необходимости): ${globalPalette}.
+
+Анимации/кадры:
+${animationDetails}
+
+Требования:
+1. Используй только базовые фигуры (<rect>, <path>, <polygon>, <g>) чтобы имитировать пиксель-арт.
+2. Каждый анимационный кадр помести в группу <g data-animation="ID" data-frame="N">.
+3. Если frames > 1, создай соответствующее количество групп для указанного animation id.
+4. Для эффектов используй полутонированные градиенты или дублированные контуры, избегай blur.
+5. Никаких комментариев, markdown и CDATA — только сам <svg>.
+6. Фон оставь прозрачным, но если нужно дать силуэт, используй отдельный слой <g data-layer="shadow">.
+7. Все координаты кратны 1px, избегай дробных значений.
+`;
+  }
+
+  private supportsResponseFormat(model: string): boolean {
+    return /(gpt-4o|gpt-4\.1|o1|o3)/i.test(model);
+  }
+
+  private debugSpritePayload(label: string, payload: string): void {
+    const trimmed = (payload || '').trim();
+    const previewLimit = 800;
+    const preview = trimmed.length > previewLimit ? `${trimmed.slice(0, previewLimit)}…` : trimmed;
+    console.debug(`[SpriteGen][${label}] preview (${trimmed.length} chars):\n${preview}`);
   }
 
   private getTemplateSpecificInstructions(config: GameConfig): string {
@@ -168,6 +571,21 @@ ${userPrompt}`;
 Каждая генерация должна отличаться наборами блоков, бонусами и конфигурацией blockedCells.`;
       default:
         return '';
+    }
+  }
+
+  private getTemplateSpecificSpriteRequirements(config: GameConfig): string {
+    switch (config.template) {
+      case GameTemplate.ARCADE:
+        return `- Для аркады (вертикальный шутер): hero должен быть космическим кораблем или летательным аппаратом, который управляется игроком снизу экрана. Должен иметь анимации idle (покачивание/мерцание), move (движение), и attack (выстрел/вспышка при стрельбе).`;
+      case GameTemplate.PLATFORMER:
+        return `- Для платформера: hero должен быть персонажем (человек, робот, существо), который может прыгать и бегать. Должен иметь анимации idle, move (бег/ходьба), и jump (прыжок).`;
+      case GameTemplate.TOWER_DEFENSE:
+        return `- Для башенной обороны: hero может отсутствовать (игра без управляемого персонажа), но если нужен, то это может быть база или защищаемый объект (role=environment).`;
+      case GameTemplate.PUZZLE:
+        return `- Для головоломки: hero может отсутствовать, так как игра обычно без управляемого персонажа.`;
+      default:
+        return `- Hero должен соответствовать тематике игры и быть управляемым объектом.`;
     }
   }
 

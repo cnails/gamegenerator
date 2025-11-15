@@ -19,12 +19,77 @@ export interface GameVisualSettings {
   accentColor?: string;
 }
 
+export type SpriteRole =
+  | 'hero'
+  | 'enemy'
+  | 'boss'
+  | 'bonus'
+  | 'projectile'
+  | 'effect'
+  | 'environment'
+  | 'ui';
+
+export type SpriteAnimationType = 'idle' | 'move' | 'attack' | 'cast' | 'hit' | 'death' | 'effect' | 'spawn';
+
+export interface SpriteAnimationCue {
+  id: string;
+  name: string;
+  type: SpriteAnimationType;
+  frames: number;
+  frameDurationMs: number;
+  loop: boolean;
+  description: string;
+}
+
+export interface SpritePlanEntry {
+  id: string;
+  role: SpriteRole;
+  name: string;
+  description: string;
+  palette: string[];
+  size: number;
+  usage: string;
+  requiresAnimation: boolean;
+  animations: SpriteAnimationCue[];
+  fxNotes?: string;
+}
+
+export interface SpriteStyleGuide {
+  artDirection: string;
+  palette: string[];
+  lighting: string;
+  shading: string;
+  strokeStyle: string;
+  background?: string;
+  textureNotes?: string;
+}
+
+export interface SpriteAsset {
+  meta: SpritePlanEntry;
+  svg: string;
+  viewBox: string;
+}
+
+export interface SpriteAssetPack {
+  styleGuide: SpriteStyleGuide;
+  spritePlan: SpritePlanEntry[];
+  spriteSheets: SpriteAsset[];
+  animationNotes: string[];
+}
+
+export interface GeneratedGameAssets {
+  artPipeline: 'llm-svg-16bit';
+  generatedAt: string;
+  spriteKit: SpriteAssetPack;
+}
+
 export interface GeneratedGameData {
   title: string;
   description: string;
   mechanics?: Record<string, unknown>;
   visuals?: GameVisualSettings;
   levels?: unknown[];
+  assets?: GeneratedGameAssets;
 }
 
 export interface GameConfig {

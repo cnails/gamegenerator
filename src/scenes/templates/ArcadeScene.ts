@@ -583,14 +583,19 @@ export class ArcadeScene extends VerticalBaseScene {
   }
 
   private createPlayerShip(): void {
-    const playerTexture = this.ensureTriangleTexture('player_ship', 46, 46, 0x4caf50);
+    const llmTexture = this.getLlmTextureKey({ role: 'hero' });
+    const playerTexture = llmTexture ?? this.ensureTriangleTexture('player_ship', 46, 46, 0x4caf50);
     this.player = this.physics.add.sprite(this.safeBounds.centerX, this.scale.height - 90, playerTexture);
     this.player.setDepth(2);
     this.player.setCollideWorldBounds(true);
     this.player.setDamping(true);
     this.player.setDragX(0.9);
     this.disableGravity(this.player);
-    this.player.body?.setSize(24, 32);
+    if (llmTexture) {
+      this.fitSpriteToLlmMeta(this.player, llmTexture, { bodyWidthRatio: 0.62, bodyHeightRatio: 0.8 });
+    } else {
+      this.player.body?.setSize(24, 32);
+    }
   }
 
   protected onPointerDown(pointer: Phaser.Input.Pointer): void {
@@ -804,9 +809,13 @@ export class ArcadeScene extends VerticalBaseScene {
     const profile = wave ? this.pickEnemyProfileForWave(wave) : this.variantSettings.enemyProfiles[0];
     const pattern = (profile?.pattern as EnemyType) ?? 'basic';
     const x = Phaser.Math.Between(Math.floor(this.safeBounds.left + 30), Math.floor(this.safeBounds.right - 30));
-    const enemy = this.enemies.create(x, -40, this.getEnemyTexture(pattern)) as Phaser.Physics.Arcade.Sprite;
+    const enemyTexture = this.getEnemyTexture(pattern);
+    const enemy = this.enemies.create(x, -40, enemyTexture) as Phaser.Physics.Arcade.Sprite;
     enemy.setDepth(1);
     this.disableGravity(enemy);
+    if (this.getLlmSpriteMetaByTexture(enemyTexture)) {
+      this.fitSpriteToLlmMeta(enemy, enemyTexture, { bodyWidthRatio: 0.6, bodyHeightRatio: 0.85 });
+    }
     const speedMultiplier = (profile?.speedMultiplier ?? 1) * this.currentSpeedMultiplier;
     const fireModifier = (profile?.fireRateMultiplier ?? 1) * this.currentFireRateMultiplier;
     enemy.setVelocityY((70 + Phaser.Math.Between(0, 40)) * this.gameSpeed * speedMultiplier);
@@ -833,6 +842,11 @@ export class ArcadeScene extends VerticalBaseScene {
   }
 
   private getEnemyTexture(type: EnemyType): string {
+    const llmTexture = this.getLlmTextureKey({ role: 'enemy', random: true });
+    if (llmTexture) {
+      return llmTexture;
+    }
+
     switch (type) {
       case 'zigzag':
         return this.ensureRoundedRectTexture('enemy_zigzag', 34, 26, 0xffc107, 6);
@@ -1101,10 +1115,17 @@ export class ArcadeScene extends VerticalBaseScene {
     }
     const profile = this.pickPowerUpProfile();
     if (!profile) return;
-    const texture = this.ensureCircleTexture(`power_${profile.id}`, 10, this.getPowerUpColor(profile.effect));
+    const llmTexture =
+      this.getLlmTextureKey({ id: profile.id }) ?? this.getLlmTextureKey({ role: 'bonus', random: true });
+    const texture = llmTexture ?? this.ensureCircleTexture(`power_${profile.id}`, 10, this.getPowerUpColor(profile.effect));
     const power = this.powerUps.create(x, y, texture) as Phaser.Physics.Arcade.Sprite;
     this.disableGravity(power);
     power.setVelocityY(50);
+    if (llmTexture) {
+      this.fitSpriteToLlmMeta(power, llmTexture, { bodyWidthRatio: 0.55, bodyHeightRatio: 0.65 });
+    } else {
+      power.setCircle(10);
+    }
     power.setData('profile', profile);
     power.setDepth(1);
   }

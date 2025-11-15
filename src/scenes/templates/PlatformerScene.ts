@@ -607,12 +607,17 @@ export class PlatformerScene extends VerticalBaseScene {
   }
 
   private createPlayer(x: number, y: number): void {
-    const textureKey = this.ensureTexture('player', 36, 36, this.theme.player);
+    const llmTexture = this.getLlmTextureKey({ role: 'hero' });
+    const textureKey = llmTexture ?? this.ensureTexture('player', 36, 36, this.theme.player);
     this.player = this.physics.add.sprite(x, y, textureKey);
     this.player.setBounce(0.2);
     this.player.setCollideWorldBounds(true);
-    this.player.setSize(28, 32);
-    this.player.setOffset((this.player.width - 28) / 2, (this.player.height - 32) / 2);
+    if (llmTexture) {
+      this.fitSpriteToLlmMeta(this.player, llmTexture, { bodyWidthRatio: 0.58, bodyHeightRatio: 0.85 });
+    } else {
+      this.player.setSize(28, 32);
+      this.player.setOffset((this.player.width - 28) / 2, (this.player.height - 32) / 2);
+    }
     this.physics.add.collider(this.player, this.platforms);
   }
 
@@ -633,9 +638,14 @@ export class PlatformerScene extends VerticalBaseScene {
     for (let i = 0; i < starCount; i++) {
       const x = Phaser.Math.Between(40, width - 40);
       const y = worldHeight - (i * (worldHeight / starCount)) - 80;
-      const textureKey = this.ensureTexture('star', 18, 18, this.theme.star);
+      const llmTexture = this.getLlmTextureKey({ role: 'bonus', random: true });
+      const textureKey = llmTexture ?? this.ensureTexture('star', 18, 18, this.theme.star);
       const star = this.stars.create(x, y, textureKey) as Phaser.Physics.Arcade.Sprite;
-      star.setCircle(9);
+      if (llmTexture) {
+        this.fitSpriteToLlmMeta(star, llmTexture, { bodyWidthRatio: 0.5, bodyHeightRatio: 0.6 });
+      } else {
+        star.setCircle(9);
+      }
       star.setBounceY(Phaser.Math.FloatBetween(0.2, 0.5));
     }
   }
@@ -647,14 +657,21 @@ export class PlatformerScene extends VerticalBaseScene {
     for (let i = 0; i < enemyCount; i++) {
       const archetype = this.variantSettings.enemyArchetypes[i % this.variantSettings.enemyArchetypes.length];
       const tint = this.parseHexColor(archetype.color) ?? this.theme.enemy;
-      const textureKey = this.ensureTexture(`enemy_${archetype.id}`, 28, 28, tint);
+      const llmTexture =
+        this.getLlmTextureKey({ id: archetype.id }) ?? this.getLlmTextureKey({ role: 'enemy', random: true });
+      const textureKey = llmTexture ?? this.ensureTexture(`enemy_${archetype.id}`, 28, 28, tint);
       const x = Phaser.Math.Between(40, width - 40);
       const y = worldHeight - Phaser.Math.Between(200, worldHeight - 200);
       const enemy = this.enemies.create(x, y, textureKey) as Phaser.Physics.Arcade.Sprite;
+      if (llmTexture) {
+        this.fitSpriteToLlmMeta(enemy, llmTexture, { bodyWidthRatio: 0.58, bodyHeightRatio: 0.8 });
+      }
       enemy.setBounce(archetype.behavior === 'hopper' ? 1 : 0.8, archetype.behavior === 'hopper' ? 0.4 : 0);
       enemy.setCollideWorldBounds(true);
       enemy.setVelocityX(Phaser.Math.Between(-80, 80) * archetype.speedMultiplier * this.gameSpeed);
-      enemy.setTint(tint);
+      if (!llmTexture) {
+        enemy.setTint(tint);
+      }
       enemy.setData('archetype', archetype);
       enemy.setData('baseSpeed', 70 * archetype.speedMultiplier * this.gameSpeed);
       enemy.setData('jumpStrength', archetype.jumpStrength);
@@ -899,10 +916,16 @@ export class PlatformerScene extends VerticalBaseScene {
     const x = Phaser.Math.Between(40, Math.max(80, width - 40));
     const y = this.cameras.main.worldView.y - 40;
     const color = this.variantPalette?.[1] ?? this.theme.combo;
-    const textureKey = this.ensureTexture(`powerup_${powerUp.id}`, 22, 22, color);
+    const llmTexture =
+      this.getLlmTextureKey({ id: powerUp.id }) ?? this.getLlmTextureKey({ role: 'bonus', random: true });
+    const textureKey = llmTexture ?? this.ensureTexture(`powerup_${powerUp.id}`, 22, 22, color);
     const sprite = this.powerUps.create(x, y, textureKey) as Phaser.Physics.Arcade.Sprite;
     sprite.setBounce(0.4);
-    sprite.setCircle(11);
+    if (llmTexture) {
+      this.fitSpriteToLlmMeta(sprite, llmTexture, { bodyWidthRatio: 0.5, bodyHeightRatio: 0.6 });
+    } else {
+      sprite.setCircle(11);
+    }
     sprite.setData('powerUp', powerUp);
     sprite.setVelocityX(Phaser.Math.Between(-20, 20));
   }

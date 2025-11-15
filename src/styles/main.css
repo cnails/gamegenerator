@@ -290,6 +290,53 @@ body {
   color: #fff;
 }
 
+.sprite-loader {
+  display: none;
+  margin-top: 15px;
+  padding: 16px;
+  border-radius: 10px;
+  border: 1px solid #2d3561;
+  background: rgba(10, 16, 28, 0.85);
+  gap: 14px;
+  align-items: center;
+  color: #cfd8ff;
+}
+
+.sprite-loader.active {
+  display: flex;
+}
+
+.sprite-loader .spinner {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 3px solid rgba(255, 255, 255, 0.15);
+  border-top-color: #4CAF50;
+  animation: sprite-spinner 0.8s linear infinite;
+}
+
+.sprite-loader-text strong {
+  display: block;
+  font-size: 14px;
+  margin-bottom: 6px;
+  color: #fff;
+}
+
+.sprite-loader-text p {
+  margin: 0;
+  font-size: 13px;
+  color: #a3b4ff;
+}
+
+@keyframes sprite-spinner {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 /* Мобильная оптимизация */
 @media (max-width: 768px) {
   #app {

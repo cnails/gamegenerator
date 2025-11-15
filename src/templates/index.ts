@@ -67,13 +67,6 @@ export const gameTemplates: GameTemplateDefinition[] = [
     ],
   },
   {
-    id: GameTemplate.VERTICAL_STANDARD,
-    name: 'Вертикальный каркас',
-    description: 'Чистая портретная сцена 9:16 для быстрых прототипов (safe-area, resize, pointer)',
-    defaultParams: {},
-    paramFields: [],
-  },
-  {
     id: GameTemplate.PUZZLE,
     name: 'Головоломка',
     description: 'Собери 3+ одинаковых блока подряд',

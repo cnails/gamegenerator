@@ -1,5 +1,12 @@
 import Phaser from 'phaser';
-import type { GeneratedGame, GeneratedGameData, GameVisualSettings } from '@/types';
+import type {
+  GeneratedGame,
+  GeneratedGameData,
+  GameVisualSettings,
+  SpriteAssetPack,
+  SpritePlanEntry,
+  SpriteRole,
+} from '@/types';
 
 export abstract class BaseGameScene extends Phaser.Scene {
   protected gameData!: GeneratedGame;
@@ -7,6 +14,10 @@ export abstract class BaseGameScene extends Phaser.Scene {
   protected scoreText!: Phaser.GameObjects.Text;
   protected gameEnded: boolean = false;
   private endEventDispatched: boolean = false;
+  private llmSpriteKit?: SpriteAssetPack;
+  private llmTexturesById = new Map<string, string>();
+  private llmTexturesByRole = new Map<SpriteRole, string[]>();
+  private llmMetaByTextureKey = new Map<string, SpritePlanEntry>();
 
   constructor(config: string | Phaser.Types.Scenes.SettingsConfig = 'game') {
     super(config);
@@ -25,6 +36,10 @@ export abstract class BaseGameScene extends Phaser.Scene {
         this.gameData = stored;
       }
     }
+  }
+
+  preload(): void {
+    this.prepareLlmSprites();
   }
 
   create(): void {
@@ -76,6 +91,61 @@ export abstract class BaseGameScene extends Phaser.Scene {
   }
 
   protected abstract initGame(): void;
+
+  protected hasLlmSpriteKit(): boolean {
+    return Boolean(this.llmSpriteKit);
+  }
+
+  protected getLlmTextureKey(options: { id?: string; role?: SpriteRole; random?: boolean } = {}): string | undefined {
+    if (!this.llmSpriteKit) {
+      return undefined;
+    }
+
+    if (options.id) {
+      const direct = this.llmTexturesById.get(options.id);
+      if (direct) {
+        return direct;
+      }
+    }
+
+    if (options.role) {
+      const pool = this.llmTexturesByRole.get(options.role);
+      if (pool?.length) {
+        return options.random ? Phaser.Utils.Array.GetRandom(pool) : pool[0];
+      }
+    }
+
+    const iterator = this.llmTexturesById.values().next();
+    return iterator.value;
+  }
+
+  protected getLlmSpriteMetaByTexture(textureKey: string): SpritePlanEntry | undefined {
+    return this.llmMetaByTextureKey.get(textureKey);
+  }
+
+  protected fitSpriteToLlmMeta(
+    sprite: Phaser.Physics.Arcade.Sprite | Phaser.Physics.Arcade.Image,
+    textureKey: string,
+    options: { bodyWidthRatio?: number; bodyHeightRatio?: number } = {},
+  ): void {
+    const meta = this.llmMetaByTextureKey.get(textureKey);
+    if (!meta) {
+      return;
+    }
+
+    const targetSize = meta.size ?? sprite.displayWidth ?? 48;
+    sprite.setDisplaySize(targetSize, targetSize);
+
+    const body = sprite.body as Phaser.Physics.Arcade.Body | Phaser.Physics.Arcade.StaticBody | undefined;
+    if (body) {
+      const widthRatio = Phaser.Math.Clamp(options.bodyWidthRatio ?? 0.65, 0.2, 1);
+      const heightRatio = Phaser.Math.Clamp(options.bodyHeightRatio ?? 0.85, 0.2, 1);
+      const bodyWidth = targetSize * widthRatio;
+      const bodyHeight = targetSize * heightRatio;
+      body.setSize(bodyWidth, bodyHeight);
+      body.setOffset((targetSize - bodyWidth) / 2, (targetSize - bodyHeight) / 2);
+    }
+  }
 
   protected updateScore(points: number): void {
     this.score += points;
@@ -181,6 +251,65 @@ export abstract class BaseGameScene extends Phaser.Scene {
     }
 
     return fallback;
+  }
+
+  private prepareLlmSprites(): void {
+    this.llmSpriteKit = undefined;
+    this.llmTexturesById.clear();
+    this.llmTexturesByRole.clear();
+    this.llmMetaByTextureKey.clear();
+
+    const payload = this.gameData?.gameData as GeneratedGameData | undefined;
+    const kit = payload?.assets?.spriteKit;
+    if (!kit || !kit.spriteSheets?.length) {
+      return;
+    }
+
+    this.llmSpriteKit = kit;
+
+    kit.spriteSheets.forEach((sheet) => {
+      if (!sheet?.svg || !sheet.meta?.id) {
+        return;
+      }
+
+      const textureKey = `llm-${this.gameData.id}-${sheet.meta.id}`;
+      if (this.textures.exists(textureKey)) {
+        this.textures.remove(textureKey);
+      }
+
+      try {
+        this.textures.addBase64(textureKey, this.svgToDataUrl(sheet.svg));
+        this.llmTexturesById.set(sheet.meta.id, textureKey);
+        this.llmMetaByTextureKey.set(textureKey, sheet.meta);
+
+        const roleList = this.llmTexturesByRole.get(sheet.meta.role) ?? [];
+        roleList.push(textureKey);
+        this.llmTexturesByRole.set(sheet.meta.role, roleList);
+      } catch (error) {
+        console.warn('[SpriteKit] Не удалось загрузить SVG текстуру', sheet.meta?.id, error);
+      }
+    });
+  }
+
+  private svgToDataUrl(svg: string): string {
+    const trimmed = svg.trim();
+    const globalWithEnc = globalThis as typeof globalThis & {
+      btoa?: typeof btoa;
+      Buffer?: { from(input: string, encoding: string): { toString(encoding: string): string } };
+    };
+
+    if (typeof globalWithEnc.btoa === 'function') {
+      const encoded = globalWithEnc.btoa(unescape(encodeURIComponent(trimmed)));
+      return `data:image/svg+xml;base64,${encoded}`;
+    }
+
+    const bufferCtor = globalWithEnc.Buffer;
+    if (bufferCtor) {
+      const encoded = bufferCtor.from(trimmed, 'utf-8').toString('base64');
+      return `data:image/svg+xml;base64,${encoded}`;
+    }
+
+    throw new Error('Нет доступного способа кодировать SVG в base64');
   }
 
   private parseColorToNumber(input?: string | null): number | null {

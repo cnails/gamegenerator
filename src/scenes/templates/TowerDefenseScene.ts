@@ -342,10 +342,18 @@ export class TowerDefenseScene extends BaseGameScene {
 
   private spawnEnemy(definition: EnemyDefinition, wave: WaveDefinition, waveIndex: number): void {
     const startPoint = this.pathPoints[0];
-    const textureKey = this.ensureCircleTexture('enemy', 14, definition.color ?? this.theme.enemy);
+    const isBoss = definition.id?.toLowerCase().includes('boss');
+    const llmTexture =
+      this.getLlmTextureKey({ id: definition.id }) ??
+      this.getLlmTextureKey({ role: isBoss ? 'boss' : 'enemy', random: true });
+    const textureKey = llmTexture ?? this.ensureCircleTexture('enemy', 14, definition.color ?? this.theme.enemy);
     const enemy = this.physics.add.sprite(startPoint.x, startPoint.y, textureKey);
     enemy.setDepth(2);
-    enemy.setCircle(12);
+    if (llmTexture) {
+      this.fitSpriteToLlmMeta(enemy, llmTexture, { bodyWidthRatio: 0.6, bodyHeightRatio: 0.85 });
+    } else {
+      enemy.setCircle(12);
+    }
     enemy.setCollideWorldBounds(false);
     this.disableGravity(enemy);
 
@@ -410,11 +418,17 @@ export class TowerDefenseScene extends BaseGameScene {
   }
 
   private fireProjectile(tower: TowerInstance, target: Phaser.Physics.Arcade.Sprite): void {
-    const textureKey = this.ensureCircleTexture('projectile', 6, tower.definition.color ?? this.theme.projectile);
+    const llmTexture =
+      this.getLlmTextureKey({ role: 'projectile', random: true }) ?? this.getLlmTextureKey({ role: 'effect', random: true });
+    const textureKey = llmTexture ?? this.ensureCircleTexture('projectile', 6, tower.definition.color ?? this.theme.projectile);
     const projectile = this.physics.add.image(tower.position.x, tower.position.y, textureKey);
     projectile.setDepth(4);
     this.disableGravity(projectile);
-    projectile.setCircle(4);
+    if (llmTexture) {
+      this.fitSpriteToLlmMeta(projectile, llmTexture, { bodyWidthRatio: 0.4, bodyHeightRatio: 0.4 });
+    } else {
+      projectile.setCircle(4);
+    }
 
     projectile.setData('damage', tower.definition.damage);
     projectile.setData('expiresAt', this.time.now + 2500);

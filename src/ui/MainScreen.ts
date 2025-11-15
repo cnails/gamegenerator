@@ -140,6 +140,13 @@ export class MainScreen {
 
       <button id="generate-btn" class="generate-btn">🎲 Сгенерировать игру</button>
       <div id="generation-status" class="generation-status"></div>
+      <div id="sprite-loader" class="sprite-loader" aria-live="polite">
+        <div class="spinner" aria-hidden="true"></div>
+        <div class="sprite-loader-text">
+          <strong>Генерация спрайтов...</strong>
+          <p id="sprite-loader-text">Формируем 16-битный набор героев и врагов</p>
+        </div>
+      </div>
     `;
 
     return panel;
@@ -258,6 +265,8 @@ export class MainScreen {
     const apiKeyInput = document.getElementById('api-key-input') as HTMLInputElement;
     const statusDiv = document.getElementById('generation-status');
     const generateBtn = document.getElementById('generate-btn') as HTMLButtonElement;
+    const spriteLoader = document.getElementById('sprite-loader');
+    const spriteLoaderText = document.getElementById('sprite-loader-text');
 
     if (!templateSelect || !difficultySelect) return;
 
@@ -294,8 +303,14 @@ export class MainScreen {
 
     // Обновляем UI
     if (statusDiv) {
-      statusDiv.textContent = 'Генерация игры...';
+      statusDiv.textContent = 'Генерация игры и 16-битной графики...';
       statusDiv.className = 'generation-status loading';
+    }
+    if (spriteLoader) {
+      spriteLoader.classList.add('active');
+    }
+    if (spriteLoaderText) {
+      spriteLoaderText.textContent = 'Собираем план спрайтов и анимаций...';
     }
     if (generateBtn) {
       generateBtn.disabled = true;
@@ -336,7 +351,13 @@ export class MainScreen {
       this.render();
 
       if (statusDiv) {
-        statusDiv.textContent = 'Игра успешно создана!';
+        const hasAssets = Boolean(gameData?.assets?.spriteKit);
+        if (hasAssets && spriteLoaderText) {
+          spriteLoaderText.textContent = 'Спрайты сохранены. Можно запускать игру!';
+        }
+        statusDiv.textContent = hasAssets
+          ? 'Игра и 16-битные спрайты готовы!'
+          : 'Игра успешно создана!';
         statusDiv.className = 'generation-status success';
       }
     } catch (error) {
@@ -348,6 +369,9 @@ export class MainScreen {
     } finally {
       if (generateBtn) {
         generateBtn.disabled = false;
+      }
+      if (spriteLoader) {
+        spriteLoader.classList.remove('active');
       }
     }
   }
