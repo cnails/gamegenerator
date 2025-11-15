@@ -76,6 +76,84 @@ export class PlatformerScene extends VerticalBaseScene {
   private collectibleScoreValue: number = 12;
   private baseCollectibleValue: number = 12;
   private hazardSettings!: PlatformerHazardPack;
+  /**
+   * Небольшое случайное смещение характеристик варианта,
+   * чтобы не полагаться только на ответ LLM.
+   */
+  private applyRuntimeVariantJitter(): void {
+    const variation = this.getGameVariationProfile();
+    const risk = Phaser.Math.Clamp(variation?.risk ?? 0.5, 0, 1);
+    const pace = variation?.pace ?? 'normal';
+
+    const randomSign = () => (Math.random() < 0.5 ? -1 : 1);
+    const noise = (amplitude: number) => Phaser.Math.FloatBetween(-amplitude, amplitude);
+
+    // Цели и продолжительность
+    const objective = this.variantSettings.objective;
+    if (objective.type === 'collect' && objective.targetCount != null) {
+      const base = objective.targetCount;
+      const delta = Math.round(base * (0.15 + risk * 0.15) * randomSign());
+      objective.targetCount = this.clampNumber(base + delta, 6, 60);
+    }
+    if (objective.type === 'score' && objective.targetScore != null) {
+      const base = objective.targetScore;
+      const delta = Math.round(base * (0.3 + risk * 0.3) * randomSign());
+      objective.targetScore = this.clampNumber(base + delta, 200, 6000);
+    }
+    if (objective.type === 'survive' && objective.survivalTime != null) {
+      const base = objective.survivalTime;
+      const paceFactor = pace === 'fast' ? -0.25 : pace === 'slow' ? 0.25 : 0;
+      const delta = Math.round(base * (0.2 * randomSign() + paceFactor));
+      objective.survivalTime = this.clampNumber(base + delta, 30, 600);
+    }
+
+    // Правила бонусов
+    const bonus = this.variantSettings.bonusRules;
+    const basePoints = bonus.pointsPerCollectible;
+    const pointsDelta = Math.round(basePoints * (0.3 + risk * 0.2) * randomSign());
+    bonus.pointsPerCollectible = this.clampNumber(basePoints + pointsDelta, 4, 60);
+
+    const baseComboDecay = bonus.comboDecaySeconds;
+    const decayNoise = noise(0.6);
+    const paceShift = pace === 'fast' ? -0.4 : pace === 'slow' ? 0.4 : 0;
+    bonus.comboDecaySeconds = this.clampNumber(baseComboDecay + decayNoise + paceShift, 0.8, 6);
+
+    // Опасности
+    const hazards = this.variantSettings.hazardPack;
+    // Частота падения: при большем риске — чаще (меньше интервал)
+    const freqMul = 1 - (0.35 + 0.35 * risk) * Math.random();
+    hazards.fallingFrequency = this.clampNumber(hazards.fallingFrequency * freqMul, 1.5, 8);
+
+    const speedMul = 1 + (0.3 + 0.4 * risk) * Math.random();
+    hazards.fallingSpeed = this.clampNumber(hazards.fallingSpeed * speedMul, 60, 260);
+
+    const countDelta = Math.round((1 + Math.round(risk * 4)) * (Math.random() < 0.6 ? 1 : -1));
+    hazards.floorHazardCount = Math.round(
+      this.clampNumber(hazards.floorHazardCount + countDelta, 2, 10),
+    );
+
+    if (Math.random() < 0.25) {
+      const styles: PlatformerHazardPack['specialStyle'][] = ['static', 'pulse', 'slide'];
+      hazards.specialStyle = Phaser.Utils.Array.GetRandom(styles);
+    }
+
+    // Враги: слегка перемешиваем порядок и усиливаем агрессию с ростом риска
+    const archetypes = [...this.variantSettings.enemyArchetypes];
+    Phaser.Utils.Array.Shuffle(archetypes);
+    archetypes.forEach((enemy) => {
+      const baseAggression = enemy.aggression;
+      const extraAggression = Phaser.Math.FloatBetween(0, 0.4 * risk);
+      enemy.aggression = this.clampNumber(baseAggression + extraAggression, 0, 1);
+
+      const speedJitter = 1 + noise(0.25 + 0.25 * risk);
+      enemy.speedMultiplier = this.clampNumber(
+        enemy.speedMultiplier * speedJitter,
+        0.5,
+        2,
+      );
+    });
+    this.variantSettings.enemyArchetypes = archetypes;
+  }
 
   private loadVariantSettings(): void {
     const defaults = this.getDefaultVariantSettings();
@@ -83,6 +161,9 @@ export class PlatformerScene extends VerticalBaseScene {
     const variantRaw = (mechanics?.platformerVariant ?? mechanics?.variant) as Partial<PlatformerVariantSettings> | undefined;
 
     this.variantSettings = this.hydrateVariantSettings(defaults, variantRaw);
+    // Добавляем поверх варианта LLM небольшой слой случайной дрожи,
+    // зависящий от общего профиля вариаций игры.
+    this.applyRuntimeVariantJitter();
     this.objectiveType = this.variantSettings.objective.type;
     this.objectiveDescription = this.variantSettings.objective.description;
     this.objectiveTargetCount = this.clampNumber(this.variantSettings.objective.targetCount ?? 18, 6, 60);
@@ -373,7 +454,10 @@ export class PlatformerScene extends VerticalBaseScene {
     const config = this.gameData.config;
     const globalTimeScale = this.getGlobalTimeScale(1);
     const rawSpeed = (config.params.speed as number) || 1;
-    this.gameSpeed = Phaser.Math.Clamp(rawSpeed * globalTimeScale, 0.5, 2.4);
+
+    // Небольшая случайная вариация темпа для каждого забега
+    const paceJitter = Phaser.Math.FloatBetween(0.85, 1.2);
+    this.gameSpeed = Phaser.Math.Clamp(rawSpeed * globalTimeScale * paceJitter, 0.5, 2.4);
     this.objectiveProgress = 0;
     this.objectiveCompleted = false;
     this.speedBoostMultiplier = 1;
@@ -382,7 +466,8 @@ export class PlatformerScene extends VerticalBaseScene {
 
     const viewportWidth = Math.max(this.safeBounds.width, 320);
     const viewportHeight = Math.max(this.safeBounds.height, 560);
-    const worldHeight = viewportHeight * 2.2;
+    // Высоту мира тоже слегка варьируем, чтобы менялось количество «этажей»
+    const worldHeight = viewportHeight * Phaser.Math.FloatBetween(2.0, 2.6);
 
     this.physics.world.setBounds(0, 0, viewportWidth, worldHeight);
     this.cameras.main.setBounds(0, 0, viewportWidth, worldHeight);
@@ -631,9 +716,20 @@ export class PlatformerScene extends VerticalBaseScene {
   }
 
   private createPlatforms(worldHeight: number, width: number): void {
-    const platformCount = 14;
+    // Количество платформ варьируется, частично завися от скорости игры
+    const baseCount = 12;
+    const speedBonus = Math.round((this.gameSpeed - 1) * 4);
+    const platformCount = Phaser.Math.Clamp(
+      baseCount + speedBonus + Phaser.Math.Between(-2, 3),
+      8,
+      22,
+    );
     for (let i = 0; i < platformCount; i++) {
-      const platformWidth = Phaser.Math.Between(Math.floor(width * 0.35), Math.floor(width * 0.7));
+      const widthNoise = Phaser.Math.FloatBetween(0.3, 0.75);
+      const platformWidth = Phaser.Math.Between(
+        Math.floor(width * Math.min(0.8, widthNoise)),
+        Math.floor(width * Math.min(0.9, widthNoise + 0.25)),
+      );
       const x = Phaser.Math.Between(platformWidth / 2 + 16, width - platformWidth / 2 - 16);
       const y = worldHeight - i * (worldHeight / platformCount) - 120;
       const textureKey = this.ensureTexture('platform', platformWidth, 24, this.theme.platform);
@@ -643,7 +739,12 @@ export class PlatformerScene extends VerticalBaseScene {
   }
 
   private spawnStars(worldHeight: number, width: number): void {
-    const starCount = this.objectiveType === 'collect' ? this.objectiveTargetCount : 18;
+    const baseStars = this.objectiveType === 'collect' ? this.objectiveTargetCount : 18;
+    const extraStars =
+      this.objectiveType === 'collect'
+        ? Phaser.Math.Between(-4, 6)
+        : Phaser.Math.Between(-6, 10);
+    const starCount = Phaser.Math.Clamp(baseStars + extraStars, 6, 40);
     for (let i = 0; i < starCount; i++) {
       const x = Phaser.Math.Between(40, width - 40);
       const y = worldHeight - (i * (worldHeight / starCount)) - 80;
@@ -662,7 +763,9 @@ export class PlatformerScene extends VerticalBaseScene {
   private createEnemies(worldHeight: number, width: number): void {
     const requested = Number(this.gameData.config.params.enemyCount);
     const baseCount = Number.isFinite(requested) && requested > 0 ? requested : 4 + Math.floor(this.gameSpeed * 2);
-    const enemyCount = Math.max(this.variantSettings.enemyArchetypes.length, baseCount);
+    // Добавляем лёгкий разброс по количеству врагов
+    const jitter = Phaser.Math.Between(-2, 3);
+    const enemyCount = Math.max(this.variantSettings.enemyArchetypes.length, baseCount + jitter);
     for (let i = 0; i < enemyCount; i++) {
       const archetype = this.variantSettings.enemyArchetypes[i % this.variantSettings.enemyArchetypes.length];
       const tint = this.parseHexColor(archetype.color) ?? this.theme.enemy;
@@ -670,7 +773,7 @@ export class PlatformerScene extends VerticalBaseScene {
         this.getLlmTextureKey({ id: archetype.id }) ?? this.getLlmTextureKey({ role: 'enemy', random: true });
       const textureKey = llmTexture ?? this.ensureTexture(`enemy_${archetype.id}`, 28, 28, tint);
       const x = Phaser.Math.Between(40, width - 40);
-      const y = worldHeight - Phaser.Math.Between(200, worldHeight - 200);
+      const y = worldHeight - Phaser.Math.Between(160, worldHeight - 240);
       const enemy = this.enemies.create(x, y, textureKey) as Phaser.Physics.Arcade.Sprite;
       if (llmTexture) {
         this.fitSpriteToLlmMeta(enemy, llmTexture, { bodyWidthRatio: 0.58, bodyHeightRatio: 0.8 });
@@ -691,10 +794,11 @@ export class PlatformerScene extends VerticalBaseScene {
   }
 
   private spawnHazards(worldHeight: number, width: number): void {
-    const hazardWidth = 40;
-    const hazardHeight = 16;
+    const hazardWidth = Phaser.Math.Between(28, 46);
+    const hazardHeight = Phaser.Math.Between(12, 22);
     const textureKey = this.ensureTexture('hazard', hazardWidth, hazardHeight, this.theme.hazard);
-    const hazardCount = Math.max(2, this.hazardSettings.floorHazardCount);
+    const jitter = Phaser.Math.Between(-1, 2);
+    const hazardCount = Math.max(2, this.hazardSettings.floorHazardCount + jitter);
 
     for (let i = 0; i < hazardCount; i++) {
       const x = (i + 1) * (width / (hazardCount + 1));
@@ -727,7 +831,11 @@ export class PlatformerScene extends VerticalBaseScene {
   private spawnFallingObstacles(width: number): void {
     const textureKey = this.ensureTexture('obstacle', 20, 40, this.theme.obstacle);
     this.time.addEvent({
-      delay: Phaser.Math.Clamp(this.hazardSettings.fallingFrequency * 1000, 1200, 6000),
+      delay: Phaser.Math.Clamp(
+        this.hazardSettings.fallingFrequency * Phaser.Math.Between(800, 1400),
+        900,
+        7000,
+      ),
       loop: true,
       callback: () => {
         if (this.gameEnded) return;
@@ -803,7 +911,12 @@ export class PlatformerScene extends VerticalBaseScene {
   private startLevelTimer(): void {
     const configDuration = Number(this.gameData.config.params.duration);
     const fallbackDuration = Number.isFinite(configDuration) && configDuration > 0 ? configDuration : 120;
-    this.timeLeft = this.objectiveType === 'survive' ? this.survivalBonusTime : fallbackDuration;
+    // Немного варьируем длительность раунда, если цель не «выжить»
+    const durationJitter = this.objectiveType === 'survive' ? 0 : Phaser.Math.Between(-20, 25);
+    this.timeLeft =
+      this.objectiveType === 'survive'
+        ? this.survivalBonusTime
+        : Phaser.Math.Clamp(fallbackDuration + durationJitter, 40, 300);
     this.timerEvent?.remove(false);
     this.timerEvent = this.time.addEvent({
       delay: 1000,
@@ -909,7 +1022,8 @@ export class PlatformerScene extends VerticalBaseScene {
       return;
     }
     this.powerUpSpawnEvent = this.time.addEvent({
-      delay: Phaser.Math.Between(9000, 14000),
+      // Разброс по частоте появления бонусов
+      delay: Phaser.Math.Between(7000, 15000),
       loop: true,
       callback: () => {
         if (this.gameEnded) return;

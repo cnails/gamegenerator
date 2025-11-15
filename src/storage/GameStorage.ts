@@ -1,45 +1,73 @@
 import type { GeneratedGame } from '@/types';
 
-const STORAGE_KEY = 'gamegenerator_games';
-const STORAGE_SCORES_KEY = 'gamegenerator_scores';
+const API_BASE = import.meta.env.VITE_API_BASE || '/api';
 
 export class GameStorage {
-  static saveGame(game: GeneratedGame): void {
-    const games = this.getAllGames();
-    const existingIndex = games.findIndex((g) => g.id === game.id);
+  static async saveGame(game: GeneratedGame): Promise<void> {
+    try {
+      const response = await fetch(`${API_BASE}/games`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(game),
+      });
 
-    if (existingIndex >= 0) {
-      games[existingIndex] = game;
-    } else {
-      games.push(game);
+      if (!response.ok) {
+        throw new Error(`Failed to save game: ${response.statusText}`);
+      }
+    } catch (error) {
+      console.error('Error saving game:', error);
+      throw error;
     }
-
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(games));
   }
 
-  static getAllGames(): GeneratedGame[] {
-    const data = localStorage.getItem(STORAGE_KEY);
-    if (!data) return [];
+  static async getAllGames(): Promise<GeneratedGame[]> {
     try {
-      return JSON.parse(data);
-    } catch {
+      const response = await fetch(`${API_BASE}/games`);
+      if (!response.ok) {
+        throw new Error(`Failed to fetch games: ${response.statusText}`);
+      }
+      return await response.json();
+    } catch (error) {
+      console.error('Error fetching games:', error);
       return [];
     }
   }
 
-  static getGame(id: string): GeneratedGame | null {
-    const games = this.getAllGames();
-    return games.find((g) => g.id === id) || null;
+  static async getGame(id: string): Promise<GeneratedGame | null> {
+    try {
+      const response = await fetch(`${API_BASE}/games/${id}`);
+      if (response.status === 404) {
+        return null;
+      }
+      if (!response.ok) {
+        throw new Error(`Failed to fetch game: ${response.statusText}`);
+      }
+      return await response.json();
+    } catch (error) {
+      console.error('Error fetching game:', error);
+      return null;
+    }
   }
 
-  static deleteGame(id: string): void {
-    const games = this.getAllGames();
-    const filtered = games.filter((g) => g.id !== id);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(filtered));
+  static async deleteGame(id: string): Promise<void> {
+    try {
+      const response = await fetch(`${API_BASE}/games/${id}`, {
+        method: 'DELETE',
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to delete game: ${response.statusText}`);
+      }
+    } catch (error) {
+      console.error('Error deleting game:', error);
+      throw error;
+    }
   }
 
-  static updateGameScore(id: string, score: number): void {
-    const game = this.getGame(id);
+  static async updateGameScore(id: string, score: number): Promise<void> {
+    const game = await this.getGame(id);
     if (!game) return;
 
     if (score > game.highScore) {
@@ -47,11 +75,11 @@ export class GameStorage {
     }
     game.score = score;
 
-    this.saveGame(game);
+    await this.saveGame(game);
   }
 
-  static getTotalRewards(): number {
-    const games = this.getAllGames();
+  static async getTotalRewards(): Promise<number> {
+    const games = await this.getAllGames();
     return games.reduce((sum, game) => sum + game.rewards, 0);
   }
 }

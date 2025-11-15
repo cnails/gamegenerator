@@ -24,15 +24,15 @@ function init(): void {
   }) as EventListener);
 
   // Обработчик завершения игры
-  gameManager.setOnGameEnd((score, rewards) => {
-    const game = GameStorage.getGame((window as unknown as { currentGameId?: string }).currentGameId || '');
+  gameManager.setOnGameEnd(async (score, rewards) => {
+    const game = await GameStorage.getGame((window as unknown as { currentGameId?: string }).currentGameId || '');
     if (game) {
       game.score = score;
       if (score > game.highScore) {
         game.highScore = score;
       }
       game.rewards += rewards;
-      GameStorage.saveGame(game);
+      await GameStorage.saveGame(game);
     }
 
     // Возвращаемся на главный экран

@@ -31,22 +31,31 @@ type ChatMessage = {
   content: string;
 };
 
+// Глобальная переменная для управления генерацией SVG иконок
+export let ENABLE_SVG_GENERATION = false;
+
 export class ChatGPTAPI {
   private apiKey: string;
   private baseUrl: string = 'https://api.openai.com/v1/chat/completions';
   private readonly defaultModel = 'gpt-4o';
 
   constructor(apiKey?: string) {
-    this.apiKey = apiKey || '';
+    // Используем env переменную, если не передан ключ в конструкторе
+    this.apiKey = apiKey || import.meta.env.VITE_OPENAI_API_KEY || '';
   }
 
   setApiKey(apiKey: string): void {
     this.apiKey = apiKey;
   }
 
+  getApiKey(): string {
+    return this.apiKey || import.meta.env.VITE_OPENAI_API_KEY || '';
+  }
+
   async generateGame(config: GameConfig): Promise<GeneratedGameData> {
-    if (!this.apiKey) {
-      throw new Error('API ключ не установлен');
+    const apiKey = this.getApiKey();
+    if (!apiKey) {
+      throw new Error('API ключ не установлен. Установите переменную окружения VITE_OPENAI_API_KEY или OPENAI_API_KEY');
     }
 
     try {
@@ -149,7 +158,8 @@ ${userPrompt}`;
   }
 
   private async callChatCompletion(messages: ChatMessage[], options: ChatCompletionOptions = {}): Promise<string> {
-    if (!this.apiKey) {
+    const apiKey = this.getApiKey();
+    if (!apiKey) {
       throw new Error('API ключ не установлен');
     }
 
@@ -173,7 +183,7 @@ ${userPrompt}`;
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${this.apiKey}`,
+        Authorization: `Bearer ${this.getApiKey()}`,
       },
       body: JSON.stringify(payload),
     });
@@ -264,6 +274,15 @@ ${userPrompt}`;
 
   private async enrichGameWithSprites(config: GameConfig, gameData: GeneratedGameData): Promise<void> {
     try {
+      // Проверяем глобальную переменную для управления генерацией SVG
+      if (!ENABLE_SVG_GENERATION) {
+        console.info('[SpriteGen] Генерация SVG отключена (ENABLE_SVG_GENERATION = false)', {
+          title: gameData.title,
+          template: config.template,
+        });
+        return;
+      }
+
       console.info('[SpriteGen] Начинаем генерацию спрайтов...', {
         title: gameData.title,
         template: config.template,

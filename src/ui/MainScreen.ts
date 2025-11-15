@@ -18,26 +18,24 @@ export class MainScreen {
       this.container.classList.remove('game-mode');
     }
     this.chatGPTAPI = new ChatGPTAPI();
-    this.loadGames();
-    this.render();
+    this.loadGames().then(async () => {
+      await this.render();
+    });
   }
 
-  setApiKey(apiKey: string): void {
-    this.chatGPTAPI.setApiKey(apiKey);
+  private async loadGames(): Promise<void> {
+    this.games = await GameStorage.getAllGames();
   }
 
-  private loadGames(): void {
-    this.games = GameStorage.getAllGames();
-  }
-
-  private render(): void {
+  private async render(): Promise<void> {
     this.container.innerHTML = '';
 
     const header = document.createElement('div');
     header.className = 'header';
+    const totalRewards = await GameStorage.getTotalRewards();
     header.innerHTML = `
       <h1>🎮 Game Generator</h1>
-      <div class="rewards">Награды: ${GameStorage.getTotalRewards()}</div>
+      <div class="rewards">Награды: ${totalRewards}</div>
     `;
 
     const content = document.createElement('div');
@@ -131,12 +129,6 @@ export class MainScreen {
       </div>
 
       <div id="params-container" class="params-container"></div>
-
-      <div class="form-group">
-        <label>API ключ ChatGPT (опционально)</label>
-        <input type="password" id="api-key-input" class="form-control" placeholder="sk-...">
-        <small>Если не указан, будут использованы значения по умолчанию</small>
-      </div>
 
       <button id="generate-btn" class="generate-btn">🎲 Сгенерировать игру</button>
       <div id="generation-status" class="generation-status"></div>
@@ -262,7 +254,6 @@ export class MainScreen {
   private async generateGame(): Promise<void> {
     const templateSelect = document.getElementById('template-select') as HTMLSelectElement;
     const difficultySelect = document.getElementById('difficulty-select') as HTMLSelectElement;
-    const apiKeyInput = document.getElementById('api-key-input') as HTMLInputElement;
     const statusDiv = document.getElementById('generation-status');
     const generateBtn = document.getElementById('generate-btn') as HTMLButtonElement;
     const spriteLoader = document.getElementById('sprite-loader');
@@ -317,12 +308,6 @@ export class MainScreen {
     }
 
     try {
-      // Устанавливаем API ключ если указан
-      const apiKey = apiKeyInput?.value.trim();
-      if (apiKey) {
-        this.chatGPTAPI.setApiKey(apiKey);
-      }
-
       // Генерируем данные игры через ChatGPT
       let gameData;
       try {
@@ -346,9 +331,9 @@ export class MainScreen {
         gameData: gameData || undefined,
       };
 
-      GameStorage.saveGame(game);
-      this.loadGames();
-      this.render();
+      await GameStorage.saveGame(game);
+      await this.loadGames();
+      await this.render();
 
       if (statusDiv) {
         const hasAssets = Boolean(gameData?.assets?.spriteKit);
@@ -376,16 +361,16 @@ export class MainScreen {
     }
   }
 
-  private deleteGame(id: string): void {
+  private async deleteGame(id: string): Promise<void> {
     if (confirm('Удалить эту игру?')) {
-      GameStorage.deleteGame(id);
-      this.loadGames();
-      this.render();
+      await GameStorage.deleteGame(id);
+      await this.loadGames();
+      await this.render();
     }
   }
 
-  private playGame(id: string): void {
-    const game = GameStorage.getGame(id);
+  private async playGame(id: string): Promise<void> {
+    const game = await GameStorage.getGame(id);
     if (!game) return;
 
     // Эмитируем событие для запуска игры
