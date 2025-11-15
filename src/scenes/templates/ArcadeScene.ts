@@ -453,7 +453,9 @@ export class ArcadeScene extends VerticalBaseScene {
     const spawnParam = Number(params.enemySpawnRate ?? 1);
     const durationParam = Number(params.duration ?? 90);
 
-    this.gameSpeed = Phaser.Math.Clamp(speedParam, 0.5, 2);
+    const globalTimeScale = this.getGlobalTimeScale(1);
+    const baseSpeed = Phaser.Math.Clamp(speedParam, 0.5, 2);
+    this.gameSpeed = Phaser.Math.Clamp(baseSpeed * globalTimeScale, 0.4, 3);
     this.spawnRateFactor = Phaser.Math.Clamp(spawnParam || 1, 0.5, 1.8);
     this.enemySpawnRate = Phaser.Math.Clamp(1800 / this.gameSpeed / this.spawnRateFactor, 500, 2600);
     const durationBase = Number.isFinite(durationParam) ? durationParam : this.variantSettings.objective.survivalTime ?? 90;
@@ -601,13 +603,15 @@ export class ArcadeScene extends VerticalBaseScene {
   protected onPointerDown(pointer: Phaser.Input.Pointer): void {
     if (this.gameEnded) return;
     this.activePointerId = pointer.id;
-    this.touchTargetX = this.clampToSafeBounds(pointer.x);
+    const x = this.globalInvertHorizontal ? this.mirrorInputX(pointer.x) : pointer.x;
+    this.touchTargetX = this.clampToSafeBounds(x);
   }
 
   protected onPointerMove(pointer: Phaser.Input.Pointer): void {
     if (this.gameEnded) return;
     if (this.activePointerId === pointer.id) {
-      this.touchTargetX = this.clampToSafeBounds(pointer.x);
+      const x = this.globalInvertHorizontal ? this.mirrorInputX(pointer.x) : pointer.x;
+      this.touchTargetX = this.clampToSafeBounds(x);
     }
   }
 
@@ -754,7 +758,11 @@ export class ArcadeScene extends VerticalBaseScene {
     if (this.touchTargetX !== undefined) {
       this.player.x = Phaser.Math.Linear(this.player.x, this.touchTargetX, 0.18);
     } else if (this.keyboardControls) {
-      const move = (this.keyboardControls.left?.isDown ? -1 : 0) + (this.keyboardControls.right?.isDown ? 1 : 0);
+      const directionFactor = this.globalInvertHorizontal ? -1 : 1;
+      const moveRaw =
+        (this.keyboardControls.left?.isDown ? -1 : 0) +
+        (this.keyboardControls.right?.isDown ? 1 : 0);
+      const move = moveRaw * directionFactor;
       if (move !== 0) {
         const speed = (260 * this.gameSpeed * delta) / 1000;
         this.player.x = clampX(this.player.x + move * speed);
@@ -1175,7 +1183,8 @@ export class ArcadeScene extends VerticalBaseScene {
     if (this.time.now < this.damageCooldownUntil) return;
     this.damageCooldownUntil = this.time.now + 700;
 
-    this.health = Math.max(0, this.health - amount);
+    const effectiveAmount = this.globalOneHitDeath ? this.health : amount;
+    this.health = Math.max(0, this.health - effectiveAmount);
     this.updateHealthText();
     this.cameras.main.shake(160, 0.0025);
     this.player.setTintFill(0xff9e80);
@@ -1290,6 +1299,11 @@ export class ArcadeScene extends VerticalBaseScene {
 
   private clampToSafeBounds(x: number): number {
     return Phaser.Math.Clamp(x, this.safeBounds.left + 24, this.safeBounds.right - 24);
+  }
+
+  private mirrorInputX(x: number): number {
+    const center = this.safeBounds.centerX;
+    return center + (center - x);
   }
 
   private getPowerUpColor(type: PowerUpType): number {

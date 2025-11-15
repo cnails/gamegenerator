@@ -295,7 +295,9 @@ export class TowerDefenseScene extends BaseGameScene {
     }
 
     let spawnIndex = 0;
-    const spawnDelay = Phaser.Math.Clamp(900 - plan.length * 15, 450, 1100);
+    const baseDelay = Phaser.Math.Clamp(900 - plan.length * 15, 450, 1100);
+    const timeScale = this.getGlobalTimeScale(1);
+    const spawnDelay = baseDelay / timeScale;
     const waveIndex = this.wavesStarted - 1;
     let spawner: Phaser.Time.TimerEvent | null = null;
 
@@ -357,14 +359,14 @@ export class TowerDefenseScene extends BaseGameScene {
     enemy.setCollideWorldBounds(false);
     this.disableGravity(enemy);
 
-    const speedMultiplier = this.getDifficultyMultiplier(this.gameData.difficulty);
+    const speedMultiplier = this.getDifficultyMultiplier(this.gameData.difficulty) * this.getGlobalTimeScale(1);
     const baseSpeed = Phaser.Math.Clamp(definition.speed, 40, 160);
     const healthMultiplier = 1 + waveIndex * 0.15;
     const rewardMultiplier = wave.rewardMultiplier || 1;
 
     const health = Math.round(this.normalizeNumber(definition.health, 120, 50, 400) * healthMultiplier * speedMultiplier);
     const reward = Math.round(this.normalizeNumber(definition.reward, 15, 5, 80) * rewardMultiplier);
-    const speed = Phaser.Math.Clamp(baseSpeed * (0.9 + waveIndex * 0.05), 40, 220);
+    const speed = Phaser.Math.Clamp(baseSpeed * (0.9 + waveIndex * 0.05), 40, 260);
 
     enemy.setData('hp', health);
     enemy.setData('maxHp', health);

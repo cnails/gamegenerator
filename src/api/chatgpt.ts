@@ -101,11 +101,33 @@ export class ChatGPTAPI {
 Сгенерируй JSON с полями:
 - title: название игры
 - description: краткое описание
-- mechanics: объект с игровой механикой (скорость, количество врагов, сложность и т.д.)
+- mechanics: объект с игровой механикой (скорость, количество врагов, сложность и т.д.). ВНУТРИ mechanics ОБЯЗАТЕЛЬНО добавь объект gameVariation со схемой:
+  {
+    "codename": "уникальное кодовое имя режима (коротко)",
+    "mood": "краткое настроение варианта (например: chaotic, calm, tactical)",
+    "pace": "slow | normal | fast",
+    "risk": число от 0 до 1,
+    "mutators": [
+      {
+        "id": "строковый id мутатора",
+        "name": "краткое название мутатора",
+        "description": "1–2 предложения, что он делает",
+        "type": "scoreMultiplier | timeScale | oneHitDeath | invertHorizontalControls",
+        "intensity": число
+      }
+    ]
+  }
 - visuals: { colors: массив цветов, style: стиль визуализации }
 - levels: массив уровней или конфигурация уровней
 
-Игра должна быть интересной, но короткой (2-3 минуты).${extra}`;
+Игра должна быть интересной, но короткой (2-3 минуты).
+
+Важно:
+- intensity для scoreMultiplier обычно 1.2–3 (множитель очков),
+- intensity для timeScale обычно 0.7–1.8 (0.7 — медленнее, 1.5 — быстрее),
+- для oneHitDeath и invertHorizontalControls intensity >= 0.5 означает «мутатор включён», < 0.5 — «выключен».
+Если не знаешь, что поставить, используй 1 для scoreMultiplier и timeScale, и 0 для остальных.
+${extra}`;
     if (userPrompt) {
       prompt += `
 
@@ -167,7 +189,17 @@ ${userPrompt}`;
     }
 
     const data = await response.json();
-    const content = data.choices?.[0]?.message?.content;
+    const choice = data.choices?.[0];
+    const content = choice?.message?.content;
+    const finishReason = choice?.finish_reason as string | undefined;
+
+    if (finishReason === 'length') {
+      console.warn('[ChatGPTAPI] Ответ модели был обрезан по длине (finish_reason=length).', {
+        model: modelName,
+        maxTokens: payload.max_tokens,
+        usage: data.usage,
+      });
+    }
     if (!content) {
       throw new Error('Пустой ответ от API');
     }
@@ -201,6 +233,15 @@ ${userPrompt}`;
     try {
       const plan = await this.generateSpritePlan(config, gameData);
       if (!plan || !plan.sprites?.length) {
+        console.info(
+          '[SpriteGen] План спрайтов отсутствует или пустой, спрайты LLM не будут использованы.',
+          {
+            title: gameData.title,
+            template: config.template,
+            hasPlan: Boolean(plan),
+            spriteCount: plan?.sprites?.length ?? 0,
+          },
+        );
         return;
       }
 
@@ -217,8 +258,20 @@ ${userPrompt}`;
       }
 
       if (!spriteSheets.length) {
+        console.warn('[SpriteGen] План спрайтов получен, но ни один SVG не был успешно сгенерирован.', {
+          title: gameData.title,
+          template: config.template,
+          plannedSprites: plan.sprites.length,
+        });
         return;
       }
+
+      console.info('[SpriteGen] Успешно сгенерирован набор спрайтов из LLM.', {
+        title: gameData.title,
+        template: config.template,
+        spriteCount: spriteSheets.length,
+        plannedSprites: plan.sprites.length,
+      });
 
       gameData.assets = {
         artPipeline: 'llm-svg-16bit',
@@ -267,7 +320,12 @@ ${userPrompt}`;
 
       try {
         const plan = JSON.parse(jsonPayload) as SpritePlanResponse;
-        
+
+        console.info('[SpriteGen] План спрайтов получен от LLM.', {
+          styleGuideHasPalette: Array.isArray(plan.styleGuide?.palette),
+          spriteCount: plan.sprites?.length ?? 0,
+        });
+
         // Проверяем наличие hero спрайта для шаблонов, где он обязателен
         const requiresHero = config.template === GameTemplate.ARCADE || config.template === GameTemplate.PLATFORMER;
         const hasHero = plan.sprites?.some((s) => s.role === 'hero');
@@ -348,7 +406,12 @@ ${userPrompt}`;
   }
 
   private buildSpritePlanPrompt(config: GameConfig, gameData: GeneratedGameData): string {
-    const mechanicsSummary = JSON.stringify(gameData.mechanics ?? {}, null, 2);
+    const mechanicsCloned = { ...(gameData.mechanics ?? {}) } as Record<string, unknown>;
+    if (mechanicsCloned && typeof mechanicsCloned === 'object') {
+      // Убираем громоздкий блок вариаций, чтобы не засорять промпт для художника
+      delete (mechanicsCloned as Record<string, unknown>)['gameVariation'];
+    }
+    const mechanicsSummary = JSON.stringify(mechanicsCloned, null, 2);
     const visualsSummary = JSON.stringify(gameData.visuals ?? {}, null, 2);
     const paramsSummary = JSON.stringify(config.params ?? {}, null, 2);
 
@@ -439,7 +502,11 @@ ${this.getTemplateSpecificSpriteRequirements(config)}
           },
           { role: 'user', content: prompt },
         ],
-        { temperature: 0.35, maxTokens: 1400 },
+        {
+          temperature: 0.35,
+          // SVG легко разрастается, даём больше лимит, чтобы не было обрезки по длине
+          maxTokens: 2200,
+        },
       );
 
       const svg = this.extractSvg(content);
@@ -500,9 +567,10 @@ ${animationDetails}
 2. Каждый анимационный кадр помести в группу <g data-animation="ID" data-frame="N">.
 3. Если frames > 1, создай соответствующее количество групп для указанного animation id.
 4. Для эффектов используй полутонированные градиенты или дублированные контуры, избегай blur.
-5. Никаких комментариев, markdown и CDATA — только сам <svg>.
-6. Фон оставь прозрачным, но если нужно дать силуэт, используй отдельный слой <g data-layer="shadow">.
-7. Все координаты кратны 1px, избегай дробных значений.
+5. Весь SVG должен быть компактным: не более примерно 1200–1500 символов. Избегай дублирования похожих path и лишних групп.
+6. Никаких комментариев, markdown и CDATA — только сам <svg>.
+7. Фон оставь прозрачным, но если нужно дать силуэт, используй отдельный слой <g data-layer="shadow">.
+8. Все координаты кратны 1px, избегай дробных значений.
 `;
   }
 

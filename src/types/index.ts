@@ -19,6 +19,46 @@ export interface GameVisualSettings {
   accentColor?: string;
 }
 
+export type GlobalMutatorType =
+  | 'scoreMultiplier'
+  | 'timeScale'
+  | 'oneHitDeath'
+  | 'invertHorizontalControls';
+
+export interface GlobalMutator {
+  id: string;
+  name: string;
+  description: string;
+  type: GlobalMutatorType;
+  /**
+   * Интенсивность эффекта:
+   * - для scoreMultiplier — множитель очков (например 1.5, 2, 3)
+   * - для timeScale — множитель темпа/скорости (0.7–1.8)
+   * - для oneHitDeath / invertHorizontalControls — >0.5 означает «включено»
+   */
+  intensity?: number;
+}
+
+export type GamePace = 'slow' | 'normal' | 'fast';
+
+export interface GameVariationProfile {
+  codename: string;
+  /**
+   * Краткое настроение варианта, свободная строка (например "chaotic", "tactical", "dreamy")
+   */
+  mood?: string;
+  pace?: GamePace;
+  /**
+   * Обобщённый риск (0–1). 0 — безопасно, 1 — очень рискованно.
+   */
+  risk?: number;
+  /**
+   * Набор глобальных мутаторов, которые движок будет применять
+   * поверх конкретной игровой логики шаблонов.
+   */
+  mutators?: GlobalMutator[];
+}
+
 export type SpriteRole =
   | 'hero'
   | 'enemy'
@@ -89,6 +129,12 @@ export interface GeneratedGameData {
   mechanics?: Record<string, unknown>;
   visuals?: GameVisualSettings;
   levels?: unknown[];
+  /**
+   * Генеративный «геном» игры — общие вариации правил,
+   * применимые во всех шаблонах (скорость, риск, мутаторы и т.п.).
+   * Обычно дублируется внутри mechanics.gameVariation.
+   */
+  variationProfile?: GameVariationProfile;
   assets?: GeneratedGameAssets;
 }
 

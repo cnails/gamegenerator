@@ -3,6 +3,8 @@ import type {
   GeneratedGame,
   GeneratedGameData,
   GameVisualSettings,
+  GameVariationProfile,
+  GlobalMutator,
   SpriteAssetPack,
   SpritePlanEntry,
   SpriteRole,
@@ -14,10 +16,16 @@ export abstract class BaseGameScene extends Phaser.Scene {
   protected scoreText!: Phaser.GameObjects.Text;
   protected gameEnded: boolean = false;
   private endEventDispatched: boolean = false;
+  protected variationProfile?: GameVariationProfile;
+  protected globalScoreMultiplier: number = 1;
+  protected globalTimeScale: number = 1;
+  protected globalOneHitDeath: boolean = false;
+  protected globalInvertHorizontal: boolean = false;
   private llmSpriteKit?: SpriteAssetPack;
   private llmTexturesById = new Map<string, string>();
   private llmTexturesByRole = new Map<SpriteRole, string[]>();
   private llmMetaByTextureKey = new Map<string, SpritePlanEntry>();
+  private llmMissingTextureDebug = new Set<string>();
 
   constructor(config: string | Phaser.Types.Scenes.SettingsConfig = 'game') {
     super(config);
@@ -61,6 +69,9 @@ export abstract class BaseGameScene extends Phaser.Scene {
     this.gameEnded = false;
     this.endEventDispatched = false;
 
+    // Загружаем вариации правил игры (генеративный профиль)
+    this.loadGameVariationProfile();
+
     // Создаем UI для счета
     this.scoreText = this.add.text(20, 20, `Очки: ${this.score}`, {
       fontSize: '24px',
@@ -83,6 +94,8 @@ export abstract class BaseGameScene extends Phaser.Scene {
     exitButton.on('pointerdown', () => {
       this.endGame(true);
     });
+
+    this.renderVariationBadge();
 
     this.cameras.main.setBackgroundColor(this.getVisualBackground());
 
@@ -116,7 +129,22 @@ export abstract class BaseGameScene extends Phaser.Scene {
     }
 
     const iterator = this.llmTexturesById.values().next();
-    return iterator.value;
+    const fallback = iterator.value as string | undefined;
+
+    if (!fallback) {
+      const key = `${options.id ?? 'no-id'}|${options.role ?? 'no-role'}`;
+      if (!this.llmMissingTextureDebug.has(key)) {
+        this.llmMissingTextureDebug.add(key);
+        console.info('[SpriteKit] LLM-спрайт не найден, используется заглушка.', {
+          request: { id: options.id, role: options.role, random: options.random },
+          hasSpriteKit: Boolean(this.llmSpriteKit),
+          availableIds: Array.from(this.llmTexturesById.keys()),
+          roles: Array.from(this.llmTexturesByRole.keys()),
+        });
+      }
+    }
+
+    return fallback;
   }
 
   protected getLlmSpriteMetaByTexture(textureKey: string): SpritePlanEntry | undefined {
@@ -148,7 +176,14 @@ export abstract class BaseGameScene extends Phaser.Scene {
   }
 
   protected updateScore(points: number): void {
-    this.score += points;
+    const multiplier = Number.isFinite(this.globalScoreMultiplier)
+      ? Phaser.Math.Clamp(this.globalScoreMultiplier, 0.25, 8)
+      : 1;
+    const delta = Math.round(points * multiplier);
+    if (!Number.isFinite(delta) || delta === 0) {
+      return;
+    }
+    this.score += delta;
     this.scoreText.setText(`Очки: ${this.score}`);
   }
 
@@ -253,15 +288,157 @@ export abstract class BaseGameScene extends Phaser.Scene {
     return fallback;
   }
 
+  protected getGameVariationProfile(): GameVariationProfile | undefined {
+    return this.variationProfile;
+  }
+
+  protected getGlobalTimeScale(defaultValue: number = 1): number {
+    if (!Number.isFinite(this.globalTimeScale)) {
+      return defaultValue;
+    }
+    return Phaser.Math.Clamp(this.globalTimeScale, 0.5, 2);
+  }
+
+  private loadGameVariationProfile(): void {
+    this.variationProfile = undefined;
+    this.globalScoreMultiplier = 1;
+    this.globalTimeScale = 1;
+    this.globalOneHitDeath = false;
+    this.globalInvertHorizontal = false;
+
+    const payload = this.gameData?.gameData as GeneratedGameData | undefined;
+    const mechanics = payload?.mechanics as Record<string, unknown> | undefined;
+    const rawVariation =
+      (mechanics?.gameVariation as GameVariationProfile | undefined) ??
+      (payload?.variationProfile as GameVariationProfile | undefined);
+
+    if (!rawVariation || typeof rawVariation !== 'object') {
+      return;
+    }
+
+    const normalized = this.normalizeGameVariationProfile(rawVariation);
+    this.variationProfile = normalized;
+
+    // Маппим мутаторы в конкретные числовые флаги
+    const mutators = normalized.mutators ?? [];
+    const getIntensity = (predicate: (m: GlobalMutator) => boolean, fallback: number): number => {
+      const match = mutators.find(predicate);
+      if (!match || typeof match.intensity !== 'number' || !Number.isFinite(match.intensity)) {
+        return fallback;
+      }
+      return match.intensity;
+    };
+
+    const scoreMul = getIntensity((m) => m.type === 'scoreMultiplier', 1);
+    this.globalScoreMultiplier = Phaser.Math.Clamp(scoreMul || 1, 0.5, 6);
+
+    const timeScale = getIntensity((m) => m.type === 'timeScale', 1);
+    this.globalTimeScale = Phaser.Math.Clamp(timeScale || 1, 0.5, 2);
+
+    const oneHitIntensity = getIntensity((m) => m.type === 'oneHitDeath', 0);
+    this.globalOneHitDeath = oneHitIntensity >= 0.5;
+
+    const invertIntensity = getIntensity((m) => m.type === 'invertHorizontalControls', 0);
+    this.globalInvertHorizontal = invertIntensity >= 0.5;
+  }
+
+  private normalizeGameVariationProfile(source: GameVariationProfile): GameVariationProfile {
+    const safeCodename =
+      typeof source.codename === 'string' && source.codename.trim().length > 0
+        ? source.codename.trim()
+        : 'LLM Variant';
+    const safeMood =
+      typeof source.mood === 'string' && source.mood.trim().length > 0 ? source.mood.trim() : undefined;
+
+    const allowedPace = new Set(['slow', 'normal', 'fast']);
+    const hasValidPace =
+      typeof source.pace === 'string' && allowedPace.has(source.pace);
+    const pace = (hasValidPace ? source.pace : 'normal') as GameVariationProfile['pace'];
+
+    const riskRaw =
+      typeof source.risk === 'number' && Number.isFinite(source.risk) ? source.risk : 0.5;
+    const risk = Phaser.Math.Clamp(riskRaw, 0, 1);
+
+    const mutators: GlobalMutator[] = Array.isArray(source.mutators)
+      ? source.mutators
+          .filter((m): m is GlobalMutator => !!m && typeof m === 'object')
+          .map((m, index) => {
+            const id =
+              typeof m.id === 'string' && m.id.trim().length > 0
+                ? m.id.trim()
+                : `mutator-${index}`;
+            const name =
+              typeof m.name === 'string' && m.name.trim().length > 0
+                ? m.name.trim()
+                : id;
+            const description =
+              typeof m.description === 'string' && m.description.trim().length > 0
+                ? m.description.trim()
+                : name;
+            const type = m.type;
+            const allowedTypes: GlobalMutator['type'][] = [
+              'scoreMultiplier',
+              'timeScale',
+              'oneHitDeath',
+              'invertHorizontalControls',
+            ];
+            const isValidType = allowedTypes.includes(type);
+            if (!isValidType) {
+              return undefined;
+            }
+            let intensity: number | undefined;
+            if (typeof m.intensity === 'number' && Number.isFinite(m.intensity)) {
+              intensity = m.intensity;
+            }
+            return { id, name, description, type, intensity };
+          })
+          .filter((m): m is GlobalMutator => !!m)
+      : [];
+
+    return {
+      codename: safeCodename,
+      mood: safeMood,
+      pace,
+      risk,
+      mutators,
+    };
+  }
+
+  private renderVariationBadge(): void {
+    const variation = this.variationProfile;
+    if (!variation || !variation.mutators || variation.mutators.length === 0) {
+      return;
+    }
+
+    const names = variation.mutators.map((m) => m.name).filter((name) => !!name);
+    if (!names.length) {
+      return;
+    }
+
+    const label = `${variation.codename} · ${names.join(', ')}`;
+    const text = this.add.text(this.scale.width / 2, this.scale.height - 24, label, {
+      fontSize: '14px',
+      color: '#ffe082',
+      fontFamily: 'Arial',
+    });
+    text.setOrigin(0.5, 1);
+    text.setScrollFactor(0);
+  }
+
   private prepareLlmSprites(): void {
     this.llmSpriteKit = undefined;
     this.llmTexturesById.clear();
     this.llmTexturesByRole.clear();
     this.llmMetaByTextureKey.clear();
+    this.llmMissingTextureDebug.clear();
 
     const payload = this.gameData?.gameData as GeneratedGameData | undefined;
     const kit = payload?.assets?.spriteKit;
     if (!kit || !kit.spriteSheets?.length) {
+      console.info('[SpriteKit] Набор LLM-спрайтов отсутствует или пустой.', {
+        hasAssets: Boolean(payload?.assets),
+        spriteSheets: kit?.spriteSheets?.length ?? 0,
+      });
       return;
     }
 
@@ -288,6 +465,16 @@ export abstract class BaseGameScene extends Phaser.Scene {
       } catch (error) {
         console.warn('[SpriteKit] Не удалось загрузить SVG текстуру', sheet.meta?.id, error);
       }
+    });
+
+    console.info('[SpriteKit] Набор LLM-спрайтов загружен.', {
+      gameId: this.gameData.id,
+      title: this.gameData.title,
+      totalTextures: this.llmTexturesById.size,
+      roles: Array.from(this.llmTexturesByRole.entries()).map(([role, list]) => ({
+        role,
+        count: list.length,
+      })),
     });
   }
 

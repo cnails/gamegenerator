@@ -371,7 +371,9 @@ export class PlatformerScene extends VerticalBaseScene {
       paddingY: 0.02,
     });
     const config = this.gameData.config;
-    this.gameSpeed = (config.params.speed as number) || 1;
+    const globalTimeScale = this.getGlobalTimeScale(1);
+    const rawSpeed = (config.params.speed as number) || 1;
+    this.gameSpeed = Phaser.Math.Clamp(rawSpeed * globalTimeScale, 0.5, 2.4);
     this.objectiveProgress = 0;
     this.objectiveCompleted = false;
     this.speedBoostMultiplier = 1;
@@ -1139,10 +1141,11 @@ export class PlatformerScene extends VerticalBaseScene {
 
     // Применяем движение
     const horizontalSpeed = 180 * this.gameSpeed * this.speedBoostMultiplier;
-    if (moveLeft) {
-      this.player.setVelocityX(-horizontalSpeed);
-    } else if (moveRight) {
-      this.player.setVelocityX(horizontalSpeed);
+    const invert = this.globalInvertHorizontal ? -1 : 1;
+    if (moveLeft && !moveRight) {
+      this.player.setVelocityX(-horizontalSpeed * invert);
+    } else if (moveRight && !moveLeft) {
+      this.player.setVelocityX(horizontalSpeed * invert);
     } else {
       this.player.setVelocityX(0);
     }

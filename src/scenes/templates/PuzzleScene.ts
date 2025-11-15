@@ -119,7 +119,12 @@ export class PuzzleScene extends VerticalBaseScene {
     if (this.variantMeta.moveBudgetModifier) {
       computedMoves = Math.round(computedMoves * this.variantMeta.moveBudgetModifier);
     }
-    this.movesLeft = Math.max(6, computedMoves);
+    // Глобальный темп влияет на «плотность» головоломки: быстрый темп — меньше ходов, медленный — больше.
+    const timeScale = this.getGlobalTimeScale(1);
+    const tempoFactor = timeScale >= 1 ? timeScale : 1 / timeScale;
+    const adjustedMoves =
+      timeScale > 1 ? computedMoves / tempoFactor : computedMoves * tempoFactor;
+    this.movesLeft = Math.max(6, Math.round(adjustedMoves));
     this.cellGap = Phaser.Math.Clamp((params.cellGap as number) || 6, 2, 14);
 
     const paletteFromBlocks = this.normalizedBlockTypes.map((type) => type.color);
