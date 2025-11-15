@@ -8,6 +8,7 @@ import type {
   SpriteAssetPack,
   SpritePlanEntry,
   SpriteRole,
+  GameAudioFile,
 } from '@/types';
 
 export abstract class BaseGameScene extends Phaser.Scene {
@@ -21,6 +22,8 @@ export abstract class BaseGameScene extends Phaser.Scene {
   protected globalTimeScale: number = 1;
   protected globalOneHitDeath: boolean = false;
   protected globalInvertHorizontal: boolean = false;
+  private backgroundMusic?: Phaser.Sound.BaseSound;
+  private backgroundMusicKey?: string;
   private llmSpriteKit?: SpriteAssetPack;
   private llmTexturesById = new Map<string, string>();
   private llmTexturesByRole = new Map<SpriteRole, string[]>();
@@ -48,6 +51,7 @@ export abstract class BaseGameScene extends Phaser.Scene {
 
   preload(): void {
     this.prepareLlmSprites();
+    this.prepareBackgroundMusic();
   }
 
   create(): void {
@@ -98,6 +102,8 @@ export abstract class BaseGameScene extends Phaser.Scene {
     this.renderVariationBadge();
 
     this.cameras.main.setBackgroundColor(this.getVisualBackground());
+
+    this.startBackgroundMusic();
 
     // Вызываем метод инициализации конкретной игры
     this.initGame();
@@ -164,7 +170,8 @@ export abstract class BaseGameScene extends Phaser.Scene {
       return;
     }
 
-    const targetSize = meta.size ?? sprite.displayWidth ?? 48;
+    // Минимальный размер LLM-спрайта — 64px, чтобы иконки не были слишком маленькими
+    const targetSize = Math.max(64, meta.size ?? sprite.displayWidth ?? 64);
     sprite.setDisplaySize(targetSize, targetSize);
 
     const body = sprite.body as Phaser.Physics.Arcade.Body | Phaser.Physics.Arcade.StaticBody | undefined;
@@ -191,6 +198,12 @@ export abstract class BaseGameScene extends Phaser.Scene {
   }
 
   protected endGame(force: boolean = false): void {
+    if (this.backgroundMusic) {
+      this.backgroundMusic.stop();
+      this.backgroundMusic.destroy();
+      this.backgroundMusic = undefined;
+    }
+
     if (this.endEventDispatched && !force) {
       return;
     }
@@ -426,6 +439,56 @@ export abstract class BaseGameScene extends Phaser.Scene {
     });
     text.setOrigin(0.5, 1);
     text.setScrollFactor(0);
+  }
+
+  private prepareBackgroundMusic(): void {
+    const payload = this.gameData?.gameData as GeneratedGameData | undefined;
+    const audioPack = payload?.assets?.audio;
+    if (!audioPack || !Array.isArray(audioPack.files) || audioPack.files.length === 0) {
+      return;
+    }
+
+    // Выбираем основной трек: сначала по kind === 'music', затем первый любой
+    const files = audioPack.files as GameAudioFile[];
+    const mainTrack =
+      files.find((f) => f.kind === 'music' && !!f.dataUrl) ??
+      files.find((f) => !!f.dataUrl);
+
+    if (!mainTrack || !mainTrack.dataUrl) {
+      return;
+    }
+
+    const key = `bgm-${this.gameData.id}`;
+    this.backgroundMusicKey = key;
+
+    // Если аудио уже есть в кэше — повторно не загружаем
+    if (this.cache.audio.exists(key)) {
+      return;
+    }
+
+    // Загружаем аудио из data URL
+    this.load.audio(key, mainTrack.dataUrl);
+  }
+
+  private startBackgroundMusic(): void {
+    if (!this.backgroundMusicKey) {
+      return;
+    }
+    // Если звук уже создан и играет — не дублируем
+    if (this.backgroundMusic && this.backgroundMusic.isPlaying) {
+      return;
+    }
+
+    try {
+      const sound = this.sound.add(this.backgroundMusicKey, {
+        loop: true,
+        volume: 0.4,
+      });
+      this.backgroundMusic = sound;
+      sound.play();
+    } catch (error) {
+      console.warn('[AudioGen] Не удалось воспроизвести фоновую музыку:', error);
+    }
   }
 
   private prepareLlmSprites(): void {

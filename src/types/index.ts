@@ -118,10 +118,36 @@ export interface SpriteAssetPack {
   animationNotes: string[];
 }
 
+export interface GameAudioFile {
+  id: string;
+  kind: 'music' | 'sfx';
+  /// Человекочитаемое имя (например "Основная тема")
+  label: string;
+  /// Имя файла (расширение обычно .wav)
+  fileName: string;
+  /// MIME тип (например "audio/wav")
+  mimeType: string;
+  /**
+   * data URL (data:audio/…;base64,…) — удобно для встраивания в <audio>.
+   * Хранить большие data URL в localStorage не идеально, но для коротких sfx и тем подойдёт.
+   */
+  dataUrl: string;
+}
+
+export interface GeneratedGameAudio {
+  pipeline: '8bit-procedural';
+  generatedAt: string;
+  files: GameAudioFile[];
+}
+
 export interface GeneratedGameAssets {
   artPipeline: 'llm-svg-16bit';
   generatedAt: string;
   spriteKit: SpriteAssetPack;
+  /**
+   * Опциональные аудио‑ассеты (музыка и SFX), сгенерированные локальным генератором.
+   */
+  audio?: GeneratedGameAudio;
 }
 
 export interface GeneratedGameData {

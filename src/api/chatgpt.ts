@@ -5,8 +5,11 @@ import type {
   SpriteAsset,
   SpritePlanEntry,
   SpriteStyleGuide,
+  GeneratedGameAudio,
+  GameAudioFile,
 } from '@/types';
 import { GameTemplate } from '@/types';
+import { generateAudioAssets } from './audioGenerator';
 
 interface ChatCompletionOptions {
   temperature?: number;
@@ -67,6 +70,7 @@ export class ChatGPTAPI {
 
       const gameData = JSON.parse(jsonPayload) as GeneratedGameData;
       await this.enrichGameWithSprites(config, gameData);
+      await this.enrichGameWithAudio(config, gameData);
       return gameData;
     } catch (error) {
       console.error('ChatGPT API Error:', error);
@@ -236,7 +240,8 @@ ${userPrompt}`;
   }
 
   private buildFallbackHeroSvg(entry: SpritePlanEntry, styleGuide: SpriteStyleGuide): string {
-    const size = entry.size || 48;
+    // Гарантируем, что fallback-иконка не будет слишком маленькой
+    const size = Math.max(64, entry.size || 64);
     const palette = entry.palette && entry.palette.length ? entry.palette : styleGuide.palette || [];
     const base = palette[0] || '#3b1f2b';
     const body = palette[1] || '#a1b5a9';
@@ -363,6 +368,105 @@ ${userPrompt}`;
     }
   }
 
+  private async enrichGameWithAudio(config: GameConfig, gameData: GeneratedGameData): Promise<void> {
+    try {
+      console.info('[AudioGen] Начинаем генерацию музыки и звуковых эффектов...', {
+        title: gameData.title,
+        template: config.template,
+      });
+
+      const musicQueryBase = `${gameData.title || 'game'} 8-bit game theme`;
+
+      const sfxQueries: { id: string; query: string; label: string }[] = [
+        { id: 'coin', query: 'coin collect', label: 'Монетки / сбор предметов' },
+        { id: 'jump', query: 'jump', label: 'Прыжок / скачок' },
+        { id: 'hit', query: 'hit', label: 'Удар / столкновение' },
+        { id: 'explosion', query: 'explosion', label: 'Взрыв / мощный эффект' },
+      ];
+
+      const audioBlobs = await generateAudioAssets({
+        music: [
+          {
+            query: musicQueryBase,
+            output: 'theme',
+            duration: 64,
+          },
+        ],
+        soundEffects: sfxQueries.map((s) => ({
+          query: s.query,
+          output: s.id,
+        })),
+      });
+
+      if (!audioBlobs.length) {
+        console.info('[AudioGen] Аудио-ассеты не были сгенерированы.');
+        return;
+      }
+
+      const files: GameAudioFile[] = await Promise.all(
+        audioBlobs.map(async (file, index) => {
+          const arrayBuffer = await file.blob.arrayBuffer();
+          const bytes = new Uint8Array(arrayBuffer);
+          let binary = '';
+          for (let i = 0; i < bytes.length; i++) {
+            binary += String.fromCharCode(bytes[i]);
+          }
+          const base64 = typeof btoa !== 'undefined' ? btoa(binary) : '';
+          const dataUrl = base64 ? `data:${file.mimeType};base64,${base64}` : '';
+
+          const matchedSfx = sfxQueries.find((s) => s.id === file.filename.replace(/\.wav$/i, ''));
+          const isMusic = file.kind === 'music';
+
+          return {
+            id: `${file.kind}-${index}`,
+            kind: file.kind,
+            label: isMusic ? 'Основная тема' : matchedSfx?.label || file.filename,
+            fileName: file.filename,
+            mimeType: file.mimeType,
+            dataUrl,
+          };
+        }),
+      );
+
+      const audioPack: GeneratedGameAudio = {
+        pipeline: '8bit-procedural',
+        generatedAt: new Date().toISOString(),
+        files,
+      };
+
+      if (!gameData.assets) {
+        gameData.assets = {
+          artPipeline: 'llm-svg-16bit',
+          generatedAt: new Date().toISOString(),
+          spriteKit: {
+            styleGuide: {
+              artDirection: '16-bit minimal placeholder',
+              palette: ['#ffffff'],
+              lighting: 'flat',
+              shading: 'none',
+              strokeStyle: 'none',
+            },
+            spritePlan: [],
+            spriteSheets: [],
+            animationNotes: [],
+          },
+          audio: audioPack,
+        };
+      } else {
+        gameData.assets.audio = audioPack;
+      }
+
+      console.info('[AudioGen] Аудио-ассеты успешно добавлены в gameData', {
+        audioFiles: audioPack.files.length,
+      });
+    } catch (error) {
+      console.error('[AudioGen] Ошибка генерации аудио-ассетов, этап пропущен:', error);
+      if (error instanceof Error) {
+        console.error('[AudioGen] Stack trace:', error.stack);
+      }
+    }
+  }
+
   private async generateSpritePlan(
     config: GameConfig,
     gameData: GeneratedGameData,
@@ -375,7 +479,7 @@ ${userPrompt}`;
           {
             role: 'system',
             content:
-              'Ты арт-директор 16-битных игр. Планируй стили и опиши, какие спрайты нужны, обязательно отмечай необходимость анимации.',
+              'Ты арт-директор 16-битных игр. Планируй стили и опиши, какие спрайты нужны, обязательно отмечай необходимость анимации. Базовое разрешение спрайтов — около 64×64 пикселей (минимум 64 по меньшей стороне).',
           },
           { role: 'user', content: prompt },
         ],
@@ -490,7 +594,7 @@ ${userPrompt}`;
     const visualsSummary = JSON.stringify(gameData.visuals ?? {}, null, 2);
     const paramsSummary = JSON.stringify(config.params ?? {}, null, 2);
 
-    return `Нужно продумать 16-битный SVG набор спрайтов для мобильной игры.
+    return `Нужно продумать 16-битный SVG набор спрайтов для мобильной игры с детализированными спрайтами в разрешении около 64×64 пикселей (не меньше 64 по меньшей стороне).
 
 Данные игры:
 - Title: ${gameData.title}
@@ -522,7 +626,7 @@ ${userPrompt}`;
       "name": "краткое название",
       "description": "что изображено",
       "palette": ["#hex"],
-      "size": 48,
+      "size": 64,
       "usage": "где применяется",
       "requiresAnimation": true,
       "animations": [
@@ -554,7 +658,7 @@ ${userPrompt}`;
 Шаблон-специфичные требования:
 ${this.getTemplateSpecificSpriteRequirements(config)}
 
-Все размеры (size) выбирай из множества [48, 56, 64, 80], придерживайся кратности 8px.
+Все размеры (size) выбирай из множества [64, 80, 96], придерживайся кратности 8px и не опускайся ниже 64px.
 Поле requiresAnimation = true, если указано больше 1 кадра или визуал должен пульсировать.
 Каждое описание анимации должно явно говорить, что именно движется, чтобы разработчик понимал, что анимировать.
 `;
@@ -575,7 +679,7 @@ ${this.getTemplateSpecificSpriteRequirements(config)}
           {
             role: 'system',
             content:
-              'Ты художник-спрайтер 16-битных игр. Возвращай только чистый SVG без пояснений и markdown. Соблюдай пиксельную сетку.',
+              'Ты художник-спрайтер 16-битных игр. Рисуешь детализированные спрайты в разрешении около 64×64 пикселей (минимум 64 по меньшей стороне). Возвращай только чистый SVG без пояснений и markdown. Соблюдай пиксельную сетку.',
           },
           { role: 'user', content: prompt },
         ],
@@ -649,7 +753,10 @@ ${this.getTemplateSpecificSpriteRequirements(config)}
 - Если у стиля уместно, добавь лёгкое подсвечивание или акцентный элемент (аура, глаз, кабина, ядро), который сразу привлекает внимание к герою.`
       : '';
 
-    return `Сгенерируй один inline SVG c viewBox="0 0 ${entry.size} ${entry.size}" и width/height=${entry.size} для спрайта "${entry.name}" (${entry.role}).
+    // Гарантируем, что итоговый SVG будет не меньше 64px по обеим осям
+    const svgSize = Math.max(64, entry.size || 64);
+
+    return `Сгенерируй один inline SVG c viewBox="0 0 ${svgSize} ${svgSize}" и width/height=${svgSize} для спрайта "${entry.name}" (${entry.role}).
 Стиль: ${styleGuide.artDirection}. Свет: ${styleGuide.lighting}. Тени: ${styleGuide.shading}. Контур: ${styleGuide.strokeStyle}.
 Дополнительно: ${styleGuide.textureNotes || 'текстуры сдержанные'}.
 Описание объекта: ${entry.description}.
